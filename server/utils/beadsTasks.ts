@@ -17,8 +17,9 @@ import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
   type BeadRow, CLOSED_SHOWN, beadActions, closeArgs, closedArgs, commentArgs, commentsArgs, createArgs, describeArgs, isBeadId, listArgs,
-  parseBeadDetails, parseBeadList, parseWhere, reopenArgs, showArgs, sourceName, startArgs, startBranch, startLabel, startPrompt,
+  beadAgentName, onBeadBranch, parseBeadDetails, parseBeadList, parseWhere, reopenArgs, showArgs, sourceName, startArgs, startBranch, startLabel, startPrompt,
 } from '../../shared/beadsTasks'
+import { joinId } from '../../shared/ids'
 import {
   type MachineTasks, type StartOptions, type TaskCommand, type TaskDetails, type TaskPanes, type TaskRow,
   cleanRepo, cleanTell, cleanTitle, isTaskCommand, isTaskId,
@@ -27,11 +28,13 @@ import type { SearchableBoard } from '../../shared/taskSearch'
 import { fmt } from '../../shared/message'
 import { USER_PATH_SH, userPath } from '../../bin/lib/userpath.mjs'
 import { DATA_DIR, HERDR_CHILD_ENV, log } from './env'
-import { HerdrError } from './herdr'
+import { HerdrError, herdrOn } from './herdr'
 import type { Machine } from './machines'
 import { installedAgentKinds } from './agentAvailability'
 import { findPane, getState, sendPrompt } from './state'
 import { createAgent } from './actions'
+import { machineWorktrees } from './worktrees'
+import type { BeadRef } from '../../shared/beadsTasks'
 
 const REUSE_MS = 5000
 const DISCOVER_MS = 60_000
@@ -216,7 +219,7 @@ export async function beadsSearchable(m: Machine): Promise<SearchableBoard> {
   return { machine: m.key, tasks: c.tasks.map(r => ({ row: strip(r), description: c.descriptions.get(r.id) || '' })) }
 }
 
-export function resetBeadsCache() { lists.clear(); reading.clear(); queues.clear(); sources.clear(); links.clear(); linksRead = false }
+export function resetBeadsCache() { refsCache.clear(); lists.clear(); reading.clear(); queues.clear(); sources.clear(); links.clear(); linksRead = false }
 function forget(m: Machine) { lists.delete(m.key) }
 
 // ---------------------------------------------------------------- one bead
@@ -235,7 +238,8 @@ async function beadOf(m: Machine, id: unknown): Promise<{ row: BeadRow, src: Bea
 export async function beadDetails(m: Machine, id: unknown): Promise<TaskDetails & TaskPanes> {
   const { row, src } = await beadOf(m, id)
   const [show, comments] = [await bd(m, src, showArgs(row.bead), LIST_TIMEOUT_MS), await bd(m, src, commentsArgs(row.bead), LIST_TIMEOUT_MS).catch(() => '')]
-  return { ...parseBeadDetails(show, row.id, comments), pane: await paneOf(m, row.id) }
+  const agent = await agentOf(m, row, src)
+  return { ...parseBeadDetails(show, row.id, comments), branch: agent.branch, worktree: agent.worktree, pane: agent.pane }
 }
 
 export async function describeBead(m: Machine, id: unknown, text: unknown): Promise<{ ok: true, msg: string }> {
@@ -251,7 +255,7 @@ export async function tellBead(m: Machine, id: unknown, text: unknown): Promise<
   const words = cleanTell(text)
   if (!words) throw new HerdrError('empty', 'Nothing to send')
   const { row, src } = await beadOf(m, id)
-  const pane = await paneOf(m, row.id)
+  const { pane } = await agentOf(m, row, src)
   const p = pane ? findPane(pane) : undefined
   if (p) {
     await sendPrompt(p, words)
@@ -290,13 +294,16 @@ export async function beadStartOptions(m: Machine, id: unknown): Promise<StartOp
 const defaultAgent = (agents: string[]) => (agents.includes('claude') ? 'claude' : agents[0] || '')
 
 // The folder an agent works on a bead in: its repo's own database's folder,
-// else (a hub issue) the repo folder of an open Herdr pane with that name.
+// else (a hub issue) the Git checkout named after the repo that an open Herdr
+// pane is in (a folder of that name without `.git`, such as Herdr's
+// worktrees/<repo>/ container, is not it).
+const isCheckout = async (m: Machine, d: string) => (await m.fs.stat(path.posix.join(d, '.git')).catch(() => null)) !== null
 async function repoFolder(m: Machine, row: BeadRow, src: BeadsSource): Promise<string> {
   if (!src.hub) return src.dir
   for (const p of getState().panes) {
     if ((p.machine || '') !== m.key || !p.cwd) continue
     for (let d = p.cwd; d.startsWith(m.home + '/'); d = path.posix.dirname(d)) {
-      if (path.posix.basename(d) === row.repo) return d
+      if (path.posix.basename(d) === row.repo && await isCheckout(m, d)) return d
       if (d === m.home) break
     }
   }
@@ -375,4 +382,60 @@ async function paneOf(m: Machine, id: string): Promise<string | null> {
   await readLinks()
   const p = links.get(`${m.key}|${id}`)
   return p && findPane(p) ? p : null
+}
+
+// The agent at work on a bead, found by its worktree: Herdr's worktrees of the
+// bead's repo (`worktree.list`), the one on the bead's branch (onBeadBranch:
+// wherdr's Start, quartermaster or any tool that names it so), and the agent
+// in its open workspace (the one named after the bead first). Without one,
+// the pane wherdr's Start opened, if Herdr still shows it. Its branch and
+// folder are given either way: the panel's files and changes are the worktree's.
+type Json = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+export interface BeadAgent { pane: string | null, branch: string, worktree: string }
+async function agentOf(m: Machine, row: BeadRow, src: BeadsSource): Promise<BeadAgent> {
+  const started = await paneOf(m, row.id)
+  let root: string
+  try { root = await repoFolder(m, row, src) } catch { return { pane: started, branch: '', worktree: '' } }
+  const r: Json | null = await herdrOn<Json>(m.key, 'worktree.list', { cwd: root, trust_repository: true }, 8000).catch(() => null)
+  const trees: Json[] = Array.isArray(r?.worktrees) ? r!.worktrees : []
+  // The open one first: two checkouts of the bead's branch, the one with agents is it.
+  const mine = trees.filter(w => w?.is_linked_worktree && !w.is_bare && typeof w.branch === 'string' && onBeadBranch(w.branch, row.bead))
+    .sort((a, b) => Number(Boolean(b.open_workspace_id)) - Number(Boolean(a.open_workspace_id)))
+  const w = mine[0]
+  if (!w) return { pane: started, branch: '', worktree: '' }
+  const ws = w.open_workspace_id ? joinId(m.key, String(w.open_workspace_id)) : null
+  const panes = ws ? getState().panes.filter(p => p.workspace === ws && p.agent) : []
+  const named = beadAgentName(row.bead)
+  const pane = panes.find(p => p.name === named) ?? (started && panes.some(p => p.id === started) ? panes.find(p => p.id === started) : undefined) ?? panes[0]
+  return { pane: pane?.id ?? started, branch: String(w.branch), worktree: typeof w.path === 'string' ? w.path : '' }
+}
+
+// ---------------------------------------------------------------- mentions
+// Every bead of the machine's Board, with the agent at work on it, for links
+// in conversations: an agent named after it (quartermaster names its workers
+// so), one in the open workspace of a worktree on its branch, or the one
+// wherdr's Start opened. Kept REFS_MS: a conversation asks again as it grows.
+const REFS_MS = 10_000
+const refsCache = new Map<string, { at: number, refs: Promise<BeadRef[]> }>()
+export function beadRefs(m: Machine): Promise<BeadRef[]> {
+  const hit = refsCache.get(m.key)
+  if (hit && Date.now() - hit.at < REFS_MS) return hit.refs
+  const refs = (async () => {
+    const c = lists.get(m.key) && Date.now() - lists.get(m.key)!.at < REUSE_MS ? lists.get(m.key)! : await readList(m)
+    await readLinks()
+    const panes = getState().panes.filter(p => (p.machine || '') === m.key && p.agent)
+    const byName = new Map(panes.filter(p => p.name).map(p => [p.name!, p.id]))
+    const trees = await machineWorktrees(m).catch(() => [])
+    return c.tasks.map((r): BeadRef => {
+      const named = byName.get(beadAgentName(r.bead))
+      const tree = named ? null : trees.find(w => w.branch && w.workspace && onBeadBranch(w.branch, r.bead))
+      const inTree = tree ? panes.find(p => p.workspace === tree.workspace) : undefined
+      const started = links.get(`${m.key}|${r.id}`)
+      const pane = named ?? inTree?.id ?? (started && findPane(started) ? started : null)
+      return { machine: m.key, id: r.id, bead: r.bead, title: r.title, group: r.group, pane }
+    })
+  })()
+  refs.catch(() => refsCache.delete(m.key))
+  refsCache.set(m.key, { at: Date.now(), refs })
+  return refs
 }

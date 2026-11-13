@@ -1320,6 +1320,14 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 /* Short tokens (`exit 0`, `5 min`, `Ctrl+C`) never break across lines. */
 .md-body code:is([data-k="num"], [data-k="key"], [data-k="err"], [data-k="ok"], [data-k="id"]) { white-space: nowrap; }
 /* File path in a conversation (ChatView.vue): dotted underline, menu on click or tap. */
+/* A bead the Board knows (utils/beadLinks.ts): to its agent (solid) or the Board (dotted). */
+.chat-list .md-body .md-bead {
+  cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--accent, var(--lav)) 70%, transparent);
+  -webkit-tap-highlight-color: transparent;
+}
+.chat-list .md-body .md-bead-agent { text-decoration-style: solid; }
+.chat-list .md-body .md-bead:focus-visible { outline: 2px solid var(--lav); outline-offset: 2px; border-radius: 3px; }
 .chat-list .md-body .md-path {
   cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px;
   text-decoration-color: color-mix(in srgb, var(--lav) 55%, transparent);

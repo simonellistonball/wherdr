@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
-  assigneeAgent, beadActions, createArgs, groupOfStatus, isBeadId, parseBeadDetails, parseBeadList, parseWhere, repoOfLabels, startPrompt,
+  assigneeAgent, beadActions, beadAgentName, createArgs, onBeadBranch, startBranch, groupOfStatus, isBeadId, parseBeadDetails, parseBeadList, parseWhere, repoOfLabels, startPrompt,
 } from '../shared/beadsTasks'
 import { isTaskId, sortTasks, taskActions, taskKey } from '../shared/projectsTasks'
 
@@ -112,4 +112,17 @@ describe('commands and helpers', () => {
     expect(p).toContain('bd close demo-fha')
     expect(p).toContain('repo:')
   })
+})
+
+describe('a bead’s branch', () => {
+  it('names its agent as quartermaster does', () => {
+    expect(beadAgentName('Hub-OZXP.32')).toBe('hub-ozxp-32')
+  })
+  it.each([
+    ['tj/hub-ab', 'hub-ab'], ['bead/hub-ab-fix-login', 'hub-ab'], ['hub-ab-fix', 'hub-ab'],
+    ['tj/hub-ozxp-32-pii-guard', 'hub-ozxp.32'], [startBranch('hub-ozxp.32'), 'hub-ozxp.32'],
+  ])('%s is %s’s', (branch, id) => expect(onBeadBranch(branch, id)).toBe(true))
+  it.each([
+    ['tj/hub-ab-7-child-work', 'hub-ab'], ['tj/hub-abc', 'hub-ab'], ['main', 'hub-ab'], ['tj/other-hub-ab', 'hub-ab'],
+  ])('%s is not %s’s', (branch, id) => expect(onBeadBranch(branch, id)).toBe(false))
 })

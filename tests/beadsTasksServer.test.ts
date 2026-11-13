@@ -11,7 +11,10 @@ const home = path.join(os.tmpdir(), 'wherdr-beads-server')
 const repo = path.join(home, 'src/demo-app')
 const web = path.join(home, 'src/web')
 const machine = { key: '', label: 'devbox', local: true, status: 'online', home, session: 'default', exec: null, sock: () => null, fs: localFs, info: () => ({ key: '' }) }
-let panes: { id: string, cwd: string, machine?: string }[] = []
+let panes: { id: string, cwd: string, machine?: string, workspace?: string, agent?: string | null, name?: string | null }[] = []
+// Herdr's `worktree.list` for a repo folder: what quartermaster (or Start) made.
+let worktrees: Record<string, unknown>[] = []
+const listed: unknown[] = []
 const created: Record<string, unknown>[] = []
 const sent: { pane: string, text: string }[] = []
 let pluginStatus = 'missing'
@@ -26,6 +29,16 @@ vi.mock('../server/utils/state', () => ({
   getState: () => ({ panes }),
   sendPrompt: async (p: { id: string }, text: string) => { sent.push({ pane: p.id, text }) },
 }))
+vi.mock('../server/utils/herdr', async orig => ({
+  ...await orig<typeof import('../server/utils/herdr')>(),
+  herdrOn: async (_m: string, method: string, params: Record<string, unknown>) => {
+    listed.push({ method, ...params })
+    return { source: { repo_root: params.cwd }, worktrees }
+  },
+}))
+// Herdr's worktrees of the machine, as server/utils/worktrees.ts lists them.
+let machineTrees: { branch: string | null, workspace: string | null, path: string }[] = []
+vi.mock('../server/utils/worktrees', () => ({ machineWorktrees: async () => machineTrees }))
 vi.mock('../server/utils/env', () => ({ HERDR_BIN: 'herdr', HERDR_CHILD_ENV: {}, DATA_DIR: path.join(home, 'wherdr-data'), log: () => {} }))
 vi.mock('../server/utils/agentAvailability', () => ({ installedAgentKinds: async () => ['codex', 'claude'] }))
 
@@ -43,6 +56,9 @@ beforeEach(() => {
   panes = [{ id: 'w1:p1', cwd: path.join(repo, 'src') }, { id: 'w2:p1', cwd: web }]
   created.length = 0
   sent.length = 0
+  worktrees = []
+  machineTrees = []
+  listed.length = 0
   calls = []
   hubFound = true
   pluginStatus = 'missing'
@@ -165,5 +181,67 @@ describe('Start and replies', () => {
     await D.readBoard()
     expect((await D.boardTell('', 'web/demo-fha', 'Use the staging key')).msg).toBe('Sent to its agent')
     expect(sent).toEqual([{ pane: 'w9:p1', text: 'Use the staging key' }])
+  })
+})
+
+describe('an agent found by its worktree', () => {
+  const qm = path.join(home, '.herdr/worktrees/web/tj-demo-fha-ship-the-release')
+  beforeEach(() => {
+    mkdirSync(qm, { recursive: true })
+    worktrees = [
+      { branch: 'main', path: web, is_linked_worktree: false },
+      { branch: 'tj/demo-fha-7-child', path: path.join(home, 'x'), is_linked_worktree: true, open_workspace_id: 'w7' },
+      { branch: 'tj/demo-fha-ship-the-release', path: qm, is_linked_worktree: true, open_workspace_id: 'w5' },
+    ]
+    panes.push(
+      { id: 'w5:p1', cwd: qm, workspace: 'w5', agent: null, name: null },
+      { id: 'w5:p2', cwd: qm, workspace: 'w5', agent: 'claude', name: 'demo-fha' },
+      { id: 'w7:p1', cwd: path.join(home, 'x'), workspace: 'w7', agent: 'claude', name: 'demo-fha-7' },
+    )
+  })
+  it('gives the panel the worker quartermaster opened, its branch and its folder', async () => {
+    await D.readBoard()
+    const d = await D.boardTaskDetails('', 'web/demo-fha')
+    expect(d).toMatchObject({ pane: 'w5:p2', branch: 'tj/demo-fha-ship-the-release', worktree: qm })
+    // Asked in the repo's own checkout (not Herdr's worktrees/web container).
+    expect(listed).toEqual([{ method: 'worktree.list', cwd: web, trust_repository: true }])
+  })
+  it('sends a reply to that worker', async () => {
+    await D.readBoard()
+    expect((await D.boardTell('', 'web/demo-fha', 'Rebase first')).msg).toBe('Sent to its agent')
+    expect(sent).toEqual([{ pane: 'w5:p2', text: 'Rebase first' }])
+  })
+  it('keeps the branch and folder of a worktree with no agent open', async () => {
+    panes = panes.filter(p => p.workspace !== 'w5')
+    worktrees = worktrees.map(w => (w.path === qm ? { ...w, open_workspace_id: null } : w))
+    await D.readBoard()
+    expect(await D.boardTaskDetails('', 'web/demo-fha')).toMatchObject({ pane: null, branch: 'tj/demo-fha-ship-the-release', worktree: qm })
+  })
+})
+
+describe('beads conversations link to', () => {
+  it('names each bead’s agent: by its name, by its worktree, or as Start opened it', async () => {
+    panes.push(
+      { id: 'w3:p1', cwd: web, workspace: 'w3', agent: 'claude', name: 'demo-64h' },
+      { id: 'w4:p1', cwd: web, workspace: 'w4', agent: 'codex', name: 'something-else' },
+    )
+    machineTrees = [{ branch: 'bead/demo-are-fix-login-bug', workspace: 'w4', path: path.join(home, 'wt') }]
+    await D.readBoard()
+    await D.boardCommand('', 'web/demo-fha', 'delegate')
+    panes.push({ id: 'w9:p1', cwd: web, workspace: 'w9', agent: 'claude', name: 'x' })
+    B.resetBeadsCache()
+    // Start's link survives in its file; the caches start again.
+    const r = await D.boardBeadRefs()
+    if ('same' in r) throw new Error('expected refs')
+    const pane = Object.fromEntries(r.refs.map(x => [x.bead, x.pane]))
+    expect(pane).toMatchObject({ 'demo-64h': 'w3:p1', 'demo-are': 'w4:p1', 'demo-fha': 'w9:p1', 'demo-8tu': null, 'demo-acy': null })
+    expect(r.refs.find(x => x.bead === 'demo-fha')).toMatchObject({ machine: '', id: 'web/demo-fha', title: 'Ship the release' })
+    expect(await D.boardBeadRefs(r.version)).toEqual({ same: true, version: r.version })
+  })
+  it('says there is no beads board, without reading herdr-projects', async () => {
+    pluginStatus = 'ready'
+    const r = await D.boardBeadRefs()
+    expect(r).toMatchObject({ refs: [], none: true })
+    expect(calls.filter(c => c.args[0] === 'list')).toEqual([])
   })
 })

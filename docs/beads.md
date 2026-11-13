@@ -62,10 +62,43 @@ This file holds credentials when your Dolt server needs them: keep it `chmod 600
   repo, else `~/<repo>`, `~/src/<repo>` or `~/code/<repo>`. Its first message names the
   issue and the `bd` commands to claim, note, ask (`--status=needs_me`) and close it.
   wherdr marks the issue `in_progress` on that agent.
-- **Reply** goes to the agent Start opened while its pane is open, else becomes a
+- **Reply** goes to the issue's agent while its pane is open, else becomes a
   `bd comment`.
 - **Description** edits run `bd update --description`.
 - **Close** (`bd close`) and **Reopen** (`bd reopen`) take the place of Archive and Restore.
+
+## Agents started elsewhere (quartermaster)
+
+An issue's agent is found by its worktree, so agents that other tools start on
+an issue show in its panel too. [quartermaster](https://github.com/travisjeffery/herdr-quartermaster)
+opens each worker in a Herdr worktree on a branch named after the issue
+(`<prefix><id>-<slug>`, the id in lower case with its dots as dashes:
+`tj/hub-ozxp-32-pii-guard`). When an issue's details are read, wherdr asks Herdr
+for the worktrees of the issue's repo (`worktree.list` in its checkout) and takes
+the one on the issue's branch, whatever its prefix. A branch whose slug starts with
+a number belongs to a child issue (`hub-ab-7-…` is `hub-ab.7`'s, not `hub-ab`'s),
+as in quartermaster. The agent in that worktree's open workspace (the one named
+after the issue first) is the issue's: the panel's conversation, terminal, files and
+changes are its, in its worktree, and replies go to it. The Task tab names the
+branch. A worktree with no workspace open still gives its branch. Without a
+worktree, the agent wherdr's own Start opened is used while Herdr shows it.
+
+## Beads named in conversations
+
+In any conversation, a bead id the Board knows (`hub-ozxp.32`, in prose or as inline
+code that is only the id) is a link. A quartermaster coordinator's reports are the
+main case. The link opens the agent at work on that bead when there is one, with a
+solid underline, or the bead's panel on the Board, with a dotted underline. "At work"
+means the agent named after the bead (as quartermaster names its workers), the agent
+in the open workspace of a worktree on the bead's branch, or the one wherdr's Start
+opened. A bead whose agent is the conversation itself links to the Board. Words that
+merely look like ids (`self-hosted`), and ids inside links, code blocks, commands,
+paths or branch names (`tj/hub-ab-fix`), stay text. When several machines read the
+same hub, the link goes to the machine where an agent works on the bead.
+
+wherdr reads the list from `GET /api/tasks/bead-refs`, from beads machines only,
+at most every 15 seconds while a conversation grows (every 5 minutes when no
+machine runs beads).
 
 Coordinators, Autopilot, Board settings, Archived, approvals, reviews and limits belong
 to herdr-projects and are not shown on a beads machine.

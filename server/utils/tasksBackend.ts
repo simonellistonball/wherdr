@@ -10,7 +10,7 @@
 // `auto`: herdr-projects where Herdr has it ready, else beads where bd finds a
 // database, else herdr-projects (whose Board then says it is not installed).
 import { createHash } from 'node:crypto'
-import { type TasksBackend, isTasksBackend } from '../../shared/beadsTasks'
+import { type BeadRef, type BeadRefsReply, type TasksBackend, isTasksBackend } from '../../shared/beadsTasks'
 import type { MachineTasks, StartOptions, TaskDetails, TaskPanes, TaskRow, TasksBoard } from '../../shared/projectsTasks'
 import type { SearchableBoard } from '../../shared/taskSearch'
 import { machineFor } from './actions'
@@ -104,4 +104,17 @@ export async function boardAdd(machine: unknown, body: Parameters<typeof project
 export async function boardArchived(machine: unknown): Promise<{ machine: string, tasks: TaskRow[] }> {
   const { m, beads: b } = await isBeads(machine)
   return b ? { machine: m.key, tasks: [] } : projects.archivedTasks(machine)
+}
+
+// The beads every beads board knows, for links in conversations. Machines on
+// herdr-projects are never read for it. `none`: no beads board at all (the
+// client can stop asking for a while).
+export async function boardBeadRefs(since?: string): Promise<BeadRefsReply> {
+  const ms = baseMachines().filter(m => m.local || m.status === 'online')
+  const kinds = await Promise.all(ms.map(m => backendOf(m).catch(() => 'projects' as const)))
+  const own = ms.filter((_, i) => kinds[i] === 'beads')
+  const refs: BeadRef[] = (await Promise.all(own.map(m => beads.beadRefs(m).catch(() => [] as BeadRef[])))).flat()
+  const version = createHash('sha1').update(JSON.stringify(refs)).digest('hex').slice(0, 16)
+  if (since === version) return { same: true, version }
+  return { version, refs, ...(own.length ? {} : { none: true }) }
 }

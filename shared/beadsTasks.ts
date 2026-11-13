@@ -252,10 +252,34 @@ export function startPrompt(id: string, title: string, hub: boolean): string {
 
 // The space Start opens: its label, and the branch of its worktree.
 export const startLabel = (id: string, title: string) => `${id} ${title}`.slice(0, 60).trim()
-export const startBranch = (id: string) => `bd/${id}`.replace(/[^\w./-]/g, '-').slice(0, 80)
+export const startBranch = (id: string) => `bd/${beadAgentName(id)}`.slice(0, 80)
+
+// ---------------------------------------------------------------- a bead's worktree
+// Agents that work on a bead elsewhere (quartermaster, travisjeffery/herdr-quartermaster)
+// do it in a Herdr worktree on a branch named after it, `<prefix><name>-<slug>`
+// (`tj/hub-ozxp-32-fix-login`; the prefix is theirs to configure), and name the
+// agent `<name>`: the id in lower case, its dots as dashes.
+export const beadAgentName = (id: string) => id.toLowerCase().replace(/\./g, '-')
+// Whether a branch is the bead's, whatever its prefix (quartermaster onBeadBranch):
+// `<name>`, or `<name>-<slug>` where the slug does not start with a number
+// (`hub-ab-7-…` is the branch of the child hub-ab.7, not of hub-ab).
+export function onBeadBranch(branch: string, id: string): boolean {
+  const name = beadAgentName(id)
+  const last = branch.split('/').pop() || ''
+  if (last === name) return true
+  if (!last.startsWith(`${name}-`)) return false
+  const seg = last.slice(name.length + 1).split('-')[0] || ''
+  return !/^\d+$/.test(seg)
+}
 
 // `bd where` (plain text): the database folder on its first line.
 export function parseWhere(stdout: string): string {
   const first = stdout.split('\n').map(l => l.trim()).find(Boolean) || ''
   return first.startsWith('/') && !first.includes('\0') ? first : ''
 }
+
+// ---------------------------------------------------------------- mentions
+// A bead a conversation can name (GET /api/tasks/bead-refs): its Board task,
+// and the agent at work on it (its pane), found as the panel finds it.
+export interface BeadRef { machine: string, id: string, bead: string, title: string, group: TaskGroup, pane: string | null }
+export type BeadRefsReply = { version: string, refs: BeadRef[], none?: boolean } | { same: true, version: string }
