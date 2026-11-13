@@ -284,7 +284,8 @@ const views = computed(() => ({
   chat: Boolean(taskPane.value) || tellOnly.value || Boolean(failureDetail.value && !needs.value),
   term: Boolean(taskPane.value),
   reviewer: Boolean(reviewerPane.value),
-  settings: props.target.kind === 'task',
+  // Its settings are herdr-projects' (`show --json`): none for a beads issue.
+  settings: props.target.kind === 'task' && props.task?.backend !== 'beads',
 }))
 const tabs = computed(() => taskPanelTabs(views.value))
 // Keep chat/term as internal destinations for existing links and shortcuts.

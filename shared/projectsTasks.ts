@@ -5,6 +5,8 @@
 // Nothing here trusts the output: every field is checked and bounded, and an
 // unknown field is dropped, so a newer 1.x can add fields without breaking it.
 
+import { type TasksBackend, beadActions } from './beadsTasks'
+
 // The board's five groups, in the order they need you (1.x: shown/states.rs).
 export type TaskGroup = 'needs' | 'ready' | 'working' | 'todo' | 'done'
 export const TASK_GROUPS: readonly TaskGroup[] = ['needs', 'ready', 'working', 'todo', 'done']
@@ -46,6 +48,11 @@ export interface TaskRow {
   // A partial read kept this row from an earlier one (when it was read, in ms).
   stale?: boolean
   readAt?: number
+  // The backend the row comes from (shared/beadsTasks.ts); none: herdr-projects.
+  backend?: TasksBackend
+  // beads only: its priority (0 highest … 4) and issue type (task, bug, feature…).
+  priority?: number
+  type?: string
 }
 
 export interface TaskAttempt { letter: string, agent: string, standing: string, stage: string, stat: string }
@@ -109,7 +116,10 @@ export interface TaskDetails {
   // its place in the queue for a free slot (1 gets the next one).
   after?: TaskWait | null
   queue?: number | null
+  // beads only: the issue as beads keeps it.
+  bead?: BeadInfo
 }
+export interface BeadInfo { id: string, status: string, priority: number, type: string, assignee: string, labels: string[], comments: number }
 
 // The panes wherdr adds to `details`: its agent's, and its reviewer's while a
 // review runs (1.x `reviewing`, or `reviewneeds` when the reviewer shows a
@@ -152,6 +162,9 @@ export const NO_ACTIONS: TaskActions = { tell: false, approve: false, delegate: 
 // One board per machine (its HOME): the named sessions of a machine share it.
 export interface MachineTasks {
   machine: string // the base machine's key
+  // What the board is (none: herdr-projects). A beads board has no
+  // coordinators, autopilot, reviews or merges.
+  backend?: TasksBackend
   // herdr-projects there (shared/projectsPlugin.ts): only `ready` has tasks.
   // `error`: Herdr did not answer, so it is not known.
   status: 'missing' | 'old' | 'shepherdr' | 'disabled' | 'ready' | 'error'
@@ -168,7 +181,8 @@ export interface TasksBoard { version: string, machines: MachineTasks[] }
 export type TasksReply = TasksBoard | { same: true, version: string }
 
 const MAX_TASKS = 500
-const ID_RE = /^[A-Za-z0-9][\w.-]{0,79}\/\d{1,7}$/
+// `<repo>/<n>` (herdr-projects), or `<repo>/<bead id>` (beads: `hub-ozxp.32`).
+const ID_RE = /^[A-Za-z0-9][\w.-]{0,79}\/(?:\d{1,7}|[A-Za-z][A-Za-z0-9_]{0,30}-[A-Za-z0-9][A-Za-z0-9.]{0,40})$/
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '')
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null)
@@ -179,7 +193,12 @@ export function isTaskId(v: unknown): v is string {
 
 // A task as herdr-projects names it (store/keys.rs tag_of): its repo's key and
 // its number, `APP-6` for `demo-app/6`; `#6` while the key is not known.
-export const taskKey = (id: string, repoKey?: string | null) => { const n = id.split('/')[1] || ''; return repoKey ? `${repoKey}-${n}` : `#${n}` }
+// A bead is named by its own id (`hub-ozxp.32`).
+export const taskKey = (id: string, repoKey?: string | null) => {
+  const n = id.split('/')[1] || ''
+  if (!/^\d*$/.test(n)) return n
+  return repoKey ? `${repoKey}-${n}` : `#${n}`
+}
 
 // A repo's key: 2 to 5 letters or digits, the first a letter, in capitals.
 const REPO_KEY_RE = /^[A-Z][A-Z0-9]{1,4}$/
@@ -448,7 +467,8 @@ export type TaskFailure = Pick<TaskDetails, 'failureStage' | 'failureAuth'>
 const ACTIVE_STAGES = ['starting', 'setup', 'working', 'checking', 'pushing', 'reviewing', 'merging', 'queued', 'attempts']
 // A failure before any agent was on it: Start again, not Retry.
 const BEFORE_AGENT = ['start', 'setup', 'attempts']
-export function taskActions(r: Pick<TaskRow, 'state' | 'kind' | 'stage' | 'group' | 'archived' | 'app'> & { msg?: string, chat?: boolean }, f?: TaskFailure | null): TaskActions {
+export function taskActions(r: Pick<TaskRow, 'state' | 'kind' | 'stage' | 'group' | 'archived' | 'app' | 'backend'> & { msg?: string, chat?: boolean }, f?: TaskFailure | null): TaskActions {
+  if (r.backend === 'beads') return beadActions(r)
   if (r.archived) return { ...NO_ACTIONS, restore: true }
   const live = r.group !== 'todo' && r.group !== 'done'
   const limitStop = r.stage === 'stopped' && r.state === 'blocked'

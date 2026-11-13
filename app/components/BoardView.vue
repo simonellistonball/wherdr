@@ -390,12 +390,14 @@ const archivedErrors = computed(() => archivedBoards.value.filter(m => m.error &
 // Archived from its sheet: off the Board now, its agent's panel closed (the
 // agent ends with its space), and a few seconds to take it back.
 function onArchived(machine: string, task: TaskRow) {
-  setArchivedHere(`${machine}|${task.id}`, true)
+  // A closed bead stays on the Board, in Done.
+  const beads = task.backend === 'beads'
+  if (!beads) setArchivedHere(`${machine}|${task.id}`, true)
   const p = panel.value
   if (p?.kind === 'task' && p.machine === machine && p.id === task.id) panel.value = null
   const name = taskKey(task.id, task.repoKey)
-  toast(tl(`${name} archived`, `${name} archivée`), false, undefined, {
-    label: tl('Restore', 'Restaurer'), icon: 'i-lucide-archive-restore', run: () => restoreTask(machine, task),
+  toast(beads ? tl(`${name} closed`) : tl(`${name} archived`, `${name} archivée`), false, undefined, {
+    label: beads ? tl('Reopen') : tl('Restore', 'Restaurer'), icon: 'i-lucide-archive-restore', run: () => restoreTask(machine, task),
   })
   reload().then(loadArchived)
 }
@@ -403,7 +405,7 @@ async function restoreTask(machine: string, task: TaskRow) {
   try {
     await api('/api/tasks/action', { machine, id: task.id, action: 'restore' })
     haptic()
-    toast(tl(`${taskKey(task.id, task.repoKey)} restored`, `${taskKey(task.id, task.repoKey)} restaurée`))
+    toast(task.backend === 'beads' ? tl(`${taskKey(task.id, task.repoKey)} reopened`) : tl(`${taskKey(task.id, task.repoKey)} restored`, `${taskKey(task.id, task.repoKey)} restaurée`))
     onRestored(machine, task)
   } catch (e) { toast((e as Error).message, true) }
 }
@@ -446,7 +448,10 @@ watch(() => [route.query.coordinator, route.query.conversation], ([repo, convers
 const coordLabel = (machine: string, to: CoordinatorTarget) => coordinatorLabel(to, machineLabel(machine))
 const MACHINE_COORDS: CoordinatorTarget[] = [{ kind: 'machine' }]
 // The main Coordinator is an entry point for all work, independent of task filters.
-const coordMachines = computed(() => board.value?.machines || [])
+// A beads board has no coordinators (shared/beadsTasks.ts).
+const coordMachines = computed(() => (board.value?.machines || []).filter(m => m.backend !== 'beads'))
+const isBeads = (machine: string) => (board.value?.machines || []).some(m => m.machine === machine && m.backend === 'beads')
+const projectsBoards = computed(() => ready.value.filter(m => m.backend !== 'beads'))
 const coordWhy = (machine: string) => {
   const m = coordMachines.value.find(m => m.machine === machine)
   return m ? coordinatorUnavailable(m, offlineView.value) : tl('Machine unavailable', 'Machine indisponible')
@@ -460,7 +465,7 @@ const coordItems = computed(() => [coordMachines.value.map(m => ({
   icon: 'i-lucide-server',
   onSelect: () => talkTo(m.machine, { kind: 'main' }),
 }))])
-const noCoordinator = computed(() => Boolean(board.value) && !coordMachines.value.some(m => !coordWhy(m.machine)))
+const noCoordinator = computed(() => Boolean(board.value) && coordMachines.value.length > 0 && !coordMachines.value.some(m => !coordWhy(m.machine)))
 const talking = (machine: string, to: CoordinatorTarget) => {
   const p = panel.value
   if (!p || p.kind !== 'coordinator' || p.machine !== machine || p.to.kind !== to.kind) return false
@@ -640,14 +645,14 @@ function back() {
           <span class="cached-tag-word">{{ `${tl('Read at', 'Lu à')} ` }}</span>{{ readAt(cachedAt) }}
         </span>
         <UButton
-          v-if="ready.length" icon="i-lucide-settings" color="neutral" variant="outline" size="sm" class="icon-btn board-settings-open" :class="{ on: settings && !settings.repo }"
+          v-if="projectsBoards.length" icon="i-lucide-settings" color="neutral" variant="outline" size="sm" class="icon-btn board-settings-open" :class="{ on: settings && !settings.repo }"
           :disabled="offlineView" :aria-label="tl('Board settings', 'Réglages du board')" :title="tl('Board settings', 'Réglages du board')" @click="openSettings(shownScope)"
         />
         <div class="board-grouping" role="group" :aria-label="tl('View', 'Vue')">
           <button type="button" :class="{ on: grouping === 'global' }" :aria-pressed="grouping === 'global'" @click="pickGrouping('global')">{{ tl('Global', 'Global') }}</button>
           <button type="button" :class="{ on: grouping === 'repo' }" :aria-pressed="grouping === 'repo'" @click="pickGrouping('repo')">{{ tl('By repo', 'Par dépôt') }}</button>
         </div>
-        <div class="board-grouping board-archived-toggle">
+        <div v-if="projectsBoards.length" class="board-grouping board-archived-toggle">
           <button type="button" :class="{ on: showArchived }" :aria-pressed="showArchived" :disabled="offlineView" @click="toggleArchived">
             <UIcon name="i-lucide-archive" />{{ tl('Archived', 'Archivées') }}
           </button>
@@ -699,7 +704,7 @@ function back() {
                   <span class="board-machine-error" role="status">{{ mg.at ? tl(`unreachable · read at ${readAt(mg.at)}`, `injoignable · lu à ${readAt(mg.at)}`) : tl('unreachable', 'injoignable') }}</span>
                 </CoordinatorHint>
               </p>
-              <div class="board-head-actions">
+              <div v-if="!isBeads(mg.machine)" class="board-head-actions">
                 <CoordinatorHint v-for="to in MACHINE_COORDS" :key="to.kind" :text="coordHint(mg.machine, to)">
                   <UButton
                     color="neutral" variant="outline" size="sm" class="board-coord" :class="{ on: talking(mg.machine, to) }"
@@ -719,6 +724,7 @@ function back() {
                   </button>
                   <p class="board-head-name"><b>{{ rg.repo }}</b><span class="board-head-sum">{{ rg.summary.main }}<span v-if="rg.summary.done" class="board-head-done">{{ rg.summary.main ? ' · ' : '' }}{{ rg.summary.done }}</span></span></p>
                   <div class="board-head-actions">
+                    <template v-if="!isBeads(mg.machine)">
                     <CoordinatorHint :text="coordHint(mg.machine, { kind: 'project', repo: rg.repo })">
                       <UButton
                         color="neutral" variant="outline" size="sm" class="board-coord" :class="{ on: talking(mg.machine, { kind: 'project', repo: rg.repo }) }"
@@ -735,6 +741,7 @@ function back() {
                       icon="i-lucide-settings" color="neutral" variant="outline" size="sm" class="board-head-add board-repo-settings" :disabled="offlineView || !settingsReachable(mg.machine)"
                       :aria-label="tl(`Repository settings: ${rg.repo}`, `Réglages du dépôt : ${rg.repo}`)" :title="tl('Repository settings', 'Réglages du dépôt')" @click="openSettings(mg.machine, rg.repo)"
                     />
+                    </template>
                     <UButton
                       icon="i-lucide-plus" color="neutral" variant="outline" size="sm" class="board-head-add" :disabled="offlineView"
                       :aria-label="tl(`New task in ${rg.repo}`, `Nouvelle tâche dans ${rg.repo}`)" @click="newTask(mg.machine, rg.repo)"
@@ -757,7 +764,7 @@ function back() {
                   </section>
                 </div>
               </section>
-              <p v-if="!mg.repos.length" class="board-empty board-machine-empty">{{ tl('No task yet: talk to the Coordinator at the top, or add one.', 'Aucune tâche : parle au Coordinateur en haut, ou ajoutes-en une.') }}</p>
+              <p v-if="!mg.repos.length" class="board-empty board-machine-empty">{{ isBeads(mg.machine) ? tl('No beads issue yet: add one.') : tl('No task yet: talk to the Coordinator at the top, or add one.', 'Aucune tâche : parle au Coordinateur en haut, ou ajoutes-en une.') }}</p>
             </template>
           </section>
         </template>

@@ -1,7 +1,7 @@
 // A machine's archived herdr-projects tasks: `?machine=<key>` (`list --json --archived`).
-import { archivedTasks } from '../../utils/projectsTasks'
+import { boardArchived } from '../../utils/tasksBackend'
 
 export default defineApi(async (event) => {
   const q = getQuery(event)
-  return archivedTasks(q.machine ?? '')
+  return boardArchived(q.machine ?? '')
 })

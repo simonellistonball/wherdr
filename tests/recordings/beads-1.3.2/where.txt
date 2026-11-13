@@ -1,0 +1,3 @@
+/home/user/demo-app/.beads
+  prefix: demo
+  database: /home/user/demo-app/.beads/embeddeddolt
