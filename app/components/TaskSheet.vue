@@ -69,6 +69,44 @@ async function saveDescription() {
   } catch (e) { if (g === gen) descriptionError.value = (e as Error).message }
   finally { if (g === gen) busy.value = false }
 }
+// A bead's labels and notes (`/api/tasks/bead`): a label added or removed at
+// once, a note appended to its notes. A hub issue's `repo:` label stays: it
+// places the issue on the Board.
+const bead = computed(() => (beads.value && details.value?.id === props.task?.id ? details.value?.bead ?? null : null))
+const labelDraft = ref('')
+const noteDraft = ref('')
+const addingNote = ref(false)
+const beadError = ref('')
+const beadUnavailable = computed(() => busy.value || offlineView.value || props.reachable === false || loading.value || !!error.value || !bead.value)
+const fixedLabel = (l: string) => Boolean(bead.value?.hub) && l.startsWith('repo:')
+// What was typed: one label, or several separated by commas.
+const typedLabels = computed(() => labelDraft.value.split(',').map(l => l.trim()).filter(l => l && !bead.value?.labels.includes(l)))
+async function editBead(change: { add?: string[], remove?: string[], note?: string }, after: () => void) {
+  const task = props.task
+  if (!task || beadUnavailable.value) return
+  const g = gen
+  busy.value = true
+  beadError.value = ''
+  try {
+    const r = await api<{ msg: string }>('/api/tasks/bead', { machine: props.machine, id: task.id, ...change })
+    if (g !== gen) return
+    after()
+    toast(r.msg)
+    await settle(g)
+  } catch (e) { if (g === gen) beadError.value = (e as Error).message }
+  finally { if (g === gen) busy.value = false }
+}
+function addLabels() {
+  const add = typedLabels.value
+  if (add.length) void editBead({ add }, () => { labelDraft.value = '' })
+}
+function removeLabel(l: string) {
+  if (!fixedLabel(l)) void editBead({ remove: [l] }, () => {})
+}
+function addNote() {
+  const note = noteDraft.value.trim()
+  if (note) void editBead({ note }, () => { noteDraft.value = ''; addingNote.value = false })
+}
 const question = ref('')
 const asking = ref(false)
 const error = ref('')
@@ -296,6 +334,10 @@ watch([open, target], ([o]) => {
   editingDescription.value = false
   descriptionDraft.value = ''
   descriptionError.value = ''
+  labelDraft.value = ''
+  noteDraft.value = ''
+  addingNote.value = false
+  beadError.value = ''
   limitOpen.value = false
   limitValue.value = ''
   limitNotice.value = ''
@@ -607,6 +649,39 @@ function chat() {
           <UButton v-if="!archived" color="neutral" variant="outline" icon="i-lucide-pencil" :disabled="descriptionUnavailable" @click="editDescription">{{ t('Edit description') }}</UButton>
         </template>
       </section>
+      <!-- beads: its labels and notes, as bd keeps them. -->
+      <section v-if="bead" class="task-sheet-block task-bead-labels">
+        <h4>{{ tl('Labels') }}</h4>
+        <p v-if="bead.labels.length" class="task-wait-line">
+          <span v-for="l in bead.labels" :key="l" class="task-wait-chip task-bead-label">
+            {{ l }}<button v-if="!fixedLabel(l)" type="button" class="task-wait-unchoose" :aria-label="tl(`Remove label ${l}`)" :disabled="beadUnavailable" @click="removeLabel(l)"><UIcon name="i-lucide-x" /></button>
+          </span>
+        </p>
+        <p v-else class="task-wait-hint">{{ tl('No labels yet.') }}</p>
+        <form class="task-bead-add" @submit.prevent="addLabels">
+          <UInput
+            v-model="labelDraft" class="w-full" autocapitalize="none" autocorrect="off" :spellcheck="false" enterkeyhint="done" maxlength="400"
+            :placeholder="tl('Add labels, separated by commas')" :aria-label="tl('New labels')" :disabled="beadUnavailable"
+          />
+          <UButton type="submit" color="neutral" variant="outline" icon="i-lucide-plus" :disabled="beadUnavailable || !typedLabels.length">{{ tl('Add') }}</UButton>
+        </form>
+      </section>
+      <section v-if="bead" class="task-sheet-block task-bead-notes">
+        <h4>{{ tl('Notes') }}</h4>
+        <p v-if="bead.notes" class="task-sheet-text">{{ bead.notes }}</p>
+        <p v-else-if="!addingNote" class="task-wait-hint">{{ tl('No notes yet.') }}</p>
+        <form v-if="addingNote" class="sheet-form task-question" @submit.prevent="addNote">
+          <label for="task-bead-note" class="field-label">{{ tl('New note') }}</label>
+          <UTextarea id="task-bead-note" v-model="noteDraft" :disabled="busy" :rows="3" :maxlength="8000" class="w-full" />
+          <p>{{ tl('Added after its notes, as bd note does.') }}</p>
+          <div class="task-sheet-actions">
+            <UButton type="submit" :loading="busy" :disabled="beadUnavailable || !noteDraft.trim()">{{ tl('Add note') }}</UButton>
+            <UButton color="neutral" variant="outline" :disabled="busy" @click="addingNote = false">{{ t('Cancel') }}</UButton>
+          </div>
+        </form>
+        <UButton v-else color="neutral" variant="outline" icon="i-lucide-notebook-pen" :disabled="beadUnavailable" @click="addingNote = true">{{ tl('Add a note') }}</UButton>
+      </section>
+      <p v-if="beadError" class="board-note error" role="alert">{{ beadError }}</p>
       <TaskSettings v-if="!embedded" :machine="machine" :id="task.id" :active="open" :reachable="reachable" />
       <section v-if="details?.plan" class="task-sheet-block">
         <h4>{{ tl('Plan', 'Plan') }}</h4>
@@ -743,4 +818,6 @@ function chat() {
 .task-attempt { border-top: 1px solid var(--line); padding: 12px 0; display: grid; gap: 8px; overflow-wrap: anywhere; }
 .task-question { display: grid; gap: 12px; margin-top: 16px; }
 .task-question p { color: var(--muted); font-size: 13px; }
+.task-bead-label { border-color: var(--line); }
+.task-bead-add { display: flex; gap: 8px; margin-top: 10px; }
 </style>

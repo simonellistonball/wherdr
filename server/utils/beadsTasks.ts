@@ -1,6 +1,6 @@
 // beads on every machine whose Board backend is beads (server/utils/tasksBackend.ts):
 // its issues (GET /api/tasks), one issue's details, and what the Board does on
-// one (create, describe, reply, close, reopen, Start an agent on it).
+// one (create, describe, label, note, reply, close, reopen, Start an agent on it).
 //
 // Where a machine's issues come from (shared/beadsTasks.ts):
 //  - its hub: the database `BEADS_DIR` names, when bd finds one from HOME;
@@ -16,7 +16,7 @@ import { execFile } from 'node:child_process'
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
-  type BeadRow, CLOSED_SHOWN, beadActions, closeArgs, closedArgs, commentArgs, commentsArgs, createArgs, describeArgs, isBeadId, listArgs,
+  type BeadRow, CLOSED_SHOWN, REPO_LABEL, beadActions, cleanLabels, closeArgs, labelsArgs, noteArgs, closedArgs, commentArgs, commentsArgs, createArgs, describeArgs, isBeadId, listArgs,
   beadAgentName, onBeadBranch, parseBeadDetails, parseBeadList, parseWhere, reopenArgs, showArgs, sourceName, startArgs, startBranch, startLabel, startPrompt,
 } from '../../shared/beadsTasks'
 import { joinId } from '../../shared/ids'
@@ -239,7 +239,8 @@ export async function beadDetails(m: Machine, id: unknown): Promise<TaskDetails 
   const { row, src } = await beadOf(m, id)
   const [show, comments] = [await bd(m, src, showArgs(row.bead), LIST_TIMEOUT_MS), await bd(m, src, commentsArgs(row.bead), LIST_TIMEOUT_MS).catch(() => '')]
   const agent = await agentOf(m, row, src)
-  return { ...parseBeadDetails(show, row.id, comments), branch: agent.branch, worktree: agent.worktree, pane: agent.pane }
+  const d = parseBeadDetails(show, row.id, comments)
+  return { ...d, ...(d.bead ? { bead: { ...d.bead, hub: src.hub } } : {}), branch: agent.branch, worktree: agent.worktree, pane: agent.pane }
 }
 
 export async function describeBead(m: Machine, id: unknown, text: unknown): Promise<{ ok: true, msg: string }> {
@@ -248,6 +249,32 @@ export async function describeBead(m: Machine, id: unknown, text: unknown): Prom
   const out = await bd(m, src, describeArgs(row.bead, text))
   forget(m)
   return { ok: true, msg: firstLine(out) }
+}
+
+// Labels added and removed, and a note appended, in that order (each its own
+// `bd update`). A hub issue's `repo:` labels place it on the Board: not changed here.
+export async function editBead(m: Machine, id: unknown, b: { add?: unknown, remove?: unknown, note?: unknown }): Promise<{ ok: true, msg: string }> {
+  const add = cleanLabels(b.add)
+  const remove = cleanLabels(b.remove)
+  if (add === null || remove === null) throw new HerdrError('bad_action', 'Invalid label: no commas, quotes or line breaks, at most 80 characters')
+  if (b.note !== undefined && (typeof b.note !== 'string' || b.note.includes('\0'))) throw new HerdrError('bad_action', 'Invalid note')
+  const note = cleanTell(b.note)
+  if (!add.length && !remove.length && !note) throw new HerdrError('empty', 'Nothing to change')
+  const { row, src } = await beadOf(m, id)
+  if (src.hub && [...add, ...remove].some(l => l.startsWith(REPO_LABEL))) throw new HerdrError('bad_action', 'The repo: label places a hub issue on the Board: change it with bd')
+  const done: string[] = []
+  try {
+    if (add.length || remove.length) {
+      await bd(m, src, labelsArgs(row.bead, add, remove.filter(l => !add.includes(l))))
+      done.push('Labels saved')
+    }
+    if (note) {
+      await bd(m, src, noteArgs(row.bead, note))
+      done.push('Note added')
+    }
+  } finally { if (done.length) forget(m) }
+  log(`bd update ${row.bead}${m.local ? '' : ` on ${m.label}`}: ${done.join(', ').toLowerCase()}`)
+  return { ok: true, msg: done.join(' · ') }
 }
 
 // A reply: to the agent's pane while it is there, else a comment on the bead.

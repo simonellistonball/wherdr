@@ -4,7 +4,8 @@
 //    tied to its repo by a `repo:<name>` label;
 //  - each Git repo open in Herdr that has its own `.beads/` folder.
 // The Board reads them with `bd list --json` and `bd show --json`, and writes
-// with `bd create`, `bd update`, `bd close`, `bd reopen` and `bd comment`.
+// with `bd create`, `bd update` (description, labels, notes), `bd close`,
+// `bd reopen` and `bd comment`.
 // beads keeps work items only: wherdr starts an agent on one (a Herdr space in
 // its repo), and the agent claims and closes it itself.
 //
@@ -168,8 +169,8 @@ export function parseBeadDetails(text: string, id: string, comments = ''): TaskD
   const after: TaskWait | null = waitsFor.length
     ? { waitsFor, left, waiting: groupOfStatus(status) === 'todo' && left.length > 0, forYou: '', titles }
     : null
-  // Design and acceptance criteria are read with the notes: the description
-  // stays as stored, since the sheet edits it.
+  // Design and acceptance criteria are read with the closing note: the
+  // description and the notes stay as stored, since the sheet edits them.
   const extra = [['Design', b.design], ['Acceptance criteria', b.acceptance_criteria]].map(([h, t]) => {
     const s = str(t, 8000).trim()
     return s ? `${h}:\n${s}` : ''
@@ -182,13 +183,13 @@ export function parseBeadDetails(text: string, id: string, comments = ''): TaskD
     agent: assigneeAgent(str(b.assignee, 120)),
     pr: prLink(b.external_ref), branch: '', worktree: '',
     failure: '', failureStage: '', failureAuth: false,
-    summary: [str(b.close_reason, 4000).trim(), ...extra, notes, said].filter(Boolean).join('\n\n'),
+    summary: [str(b.close_reason, 4000).trim(), ...extra, said].filter(Boolean).join('\n\n'),
     report: null, review: null, reviewRounds: 0, plan: '', research: false, archived: false,
     after, queue: null,
     bead: {
       id: b.id, status, priority: typeof b.priority === 'number' ? b.priority : 2, type: str(b.issue_type, 30),
       assignee: str(b.assignee, 120), labels: Array.isArray(b.labels) ? b.labels.filter((l): l is string => typeof l === 'string').slice(0, 50) : [],
-      comments: commentCount(comments),
+      comments: commentCount(comments), notes,
     },
   }
 }
@@ -234,6 +235,32 @@ export const describeArgs = (id: string, text: string) => ['update', `--descript
 export const closeArgs = (id: string) => ['close', '--reason=Closed from wherdr', '--', id]
 export const reopenArgs = (id: string) => ['reopen', '--', id]
 export const commentArgs = (id: string, text: string) => ['comment', '--', id, text]
+// Labels added and removed in one `bd update`; a note appended to its notes.
+export const labelsArgs = (id: string, add: readonly string[], remove: readonly string[]) =>
+  ['update', ...add.map(l => `--add-label=${l}`), ...remove.map(l => `--remove-label=${l}`), '--', id]
+export const noteArgs = (id: string, text: string) => ['update', `--append-notes=${text}`, '--', id]
+
+// A label as the sheet takes it: bd reads `--add-label` as comma-separated
+// values (quotes included), so no comma, quote or line break; trimmed, at
+// most LABEL_MAX characters. null: not a label.
+export const LABEL_MAX = 80
+export function cleanLabel(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const l = v.trim()
+  return l && l.length <= LABEL_MAX && !/[,"'\n\r\t\0]/.test(l) ? l : null
+}
+// Labels of a request: every one valid, no repeats, at most 20; null otherwise.
+export function cleanLabels(v: unknown): string[] | null {
+  if (v === undefined) return []
+  if (!Array.isArray(v) || v.length > 20) return null
+  const out: string[] = []
+  for (const x of v) {
+    const l = cleanLabel(x)
+    if (l === null) return null
+    if (!out.includes(l)) out.push(l)
+  }
+  return out
+}
 // What Start marks: in progress, on that agent (the agent claims it again itself).
 export const startArgs = (id: string, agent: string) => ['update', '--status=in_progress', `--assignee=${agent}`, '--', id]
 

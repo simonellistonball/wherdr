@@ -65,6 +65,17 @@ This file holds credentials when your Dolt server needs them: keep it `chmod 600
 - **Reply** goes to the issue's agent while its pane is open, else becomes a
   `bd comment`.
 - **Description** edits run `bd update --description`.
+- **Labels** are listed in the task sheet. Removing one (×) or adding some (comma-separated)
+  runs `bd update --add-label/--remove-label`. A label has no commas, quotes or line
+  breaks, since `bd` reads those flags as comma-separated lists. A hub issue's `repo:`
+  label places it on the Board, so the sheet does not change it; use `bd` for that.
+  The labels of a repo's own database can all be changed.
+- **Notes** (the issue's notes field, which agents write with `bd note`) have their own
+  section. **Add a note** appends to them with `bd update --append-notes`. The Closing note
+  keeps the close reason, design, acceptance criteria and comments.
+
+These go through `POST /api/tasks/bead` (`{ machine, id, add?, remove?, note? }`), which
+refuses herdr-projects tasks.
 - **Close** (`bd close`) and **Reopen** (`bd reopen`) take the place of Archive and Restore.
 
 ## Agents started elsewhere (quartermaster)

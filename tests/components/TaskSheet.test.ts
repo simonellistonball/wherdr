@@ -1117,6 +1117,67 @@ describe('a beads issue', () => {
     Object.assign(shown, { stage: 'approval' })
     w.unmount()
   })
+  describe('labels and notes', () => {
+    let info = { id: 'demo-fha', status: 'open', priority: 2, type: 'task', assignee: '', labels: ['repo:web', 'ui'], comments: 0, notes: 'Changelog drafted', hub: true }
+    let edits: Record<string, unknown>[] = []
+    let refuses = false
+    registerEndpoint('/api/tasks/bead', { method: 'POST', handler: async (e) => {
+      const body = await readBody(e)
+      edits.push(body)
+      if (refuses) { setResponseStatus(e, 502); return { error: 'bd refused' } }
+      const labels = [...info.labels.filter(l => !(body.remove || []).includes(l)), ...(body.add || [])]
+      info = { ...info, labels, notes: body.note ? `${info.notes}\n${body.note}` : info.notes }
+      return { ok: true, msg: 'Saved' }
+    } })
+    async function mountBead() {
+      edits = []; refuses = false
+      info = { ...info, labels: ['repo:web', 'ui'], notes: 'Changelog drafted' }
+      registerEndpoint('/api/tasks/details', () => ({ id: 'web/demo-fha', title: 'Ship the release', msg: '', description: '', agent: '', pr: '', branch: '', worktree: '', failure: '', failureStage: '', failureAuth: false, summary: '', pane: null, stage: 'open', bead: info }))
+      const w = await mountSuspended(TaskSheet, { props: { embedded: true, task: bead, machine: 'a', open: true } })
+      await flushPromises()
+      return w
+    }
+    it('shows labels, keeps a hub issue’s repo label, adds and removes the others', async () => {
+      const w = await mountBead()
+      const chips = () => w.findAll('.task-bead-labels .task-wait-chip')
+      expect(chips().map(c => c.text())).toEqual(['repo:web', 'ui'])
+      expect(chips()[0]!.find('button').exists()).toBe(false)
+      await chips()[1]!.get('button').trigger('click')
+      await flushPromises()
+      expect(edits).toEqual([{ machine: 'a', id: 'web/demo-fha', remove: ['ui'] }])
+      await vi.waitFor(() => expect(chips().map(c => c.text())).toEqual(['repo:web']))
+      await w.get('.task-bead-add input').setValue(' bug, needs review ,, repo:web ')
+      await w.get('.task-bead-add').trigger('submit')
+      await flushPromises()
+      expect(edits.at(-1)).toEqual({ machine: 'a', id: 'web/demo-fha', add: ['bug', 'needs review'] })
+      await vi.waitFor(() => expect(chips().map(c => c.text())).toEqual(['repo:web', 'bug', 'needs review']))
+      expect((w.get('.task-bead-add input').element as HTMLInputElement).value).toBe('')
+      w.unmount()
+    })
+    it('appends a note, and keeps the draft and error when bd refuses', async () => {
+      const w = await mountBead()
+      expect(w.get('.task-bead-notes .task-sheet-text').text()).toBe('Changelog drafted')
+      await w.get('.task-bead-notes button').trigger('click')
+      await w.get('.task-bead-notes textarea').setValue('Waiting on the key')
+      refuses = true
+      await w.get('.task-bead-notes form').trigger('submit'); await flushPromises()
+      await vi.waitFor(() => expect(w.get('[role=alert]').text()).toContain('bd refused'))
+      expect(w.get('.task-bead-notes textarea').element.value).toBe('Waiting on the key')
+      refuses = false
+      await w.get('.task-bead-notes form').trigger('submit'); await flushPromises()
+      expect(edits.at(-1)).toEqual({ machine: 'a', id: 'web/demo-fha', note: 'Waiting on the key' })
+      await vi.waitFor(() => expect(w.get('.task-bead-notes .task-sheet-text').text()).toBe('Changelog drafted\nWaiting on the key'))
+      expect(w.find('.task-bead-notes textarea').exists()).toBe(false)
+      w.unmount()
+    })
+    it('is not shown for a herdr-projects task', async () => {
+      const w = await mountSuspended(TaskSheet, { props: { embedded: true, task, machine: 'a', open: true } })
+      await flushPromises()
+      expect(w.find('.task-bead-labels').exists()).toBe(false)
+      expect(w.find('.task-bead-notes').exists()).toBe(false)
+      w.unmount()
+    })
+  })
   it('offers Reopen once closed', async () => {
     Object.assign(shown, { stage: 'closed', failure: '', failureStage: '' })
     const w = await mountSuspended(TaskSheet, { props: { task: { ...bead, state: 'done', stage: 'closed', group: 'done' }, machine: 'a', open: true } })

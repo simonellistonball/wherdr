@@ -119,7 +119,9 @@ export interface TaskDetails {
   // beads only: the issue as beads keeps it.
   bead?: BeadInfo
 }
-export interface BeadInfo { id: string, status: string, priority: number, type: string, assignee: string, labels: string[], comments: number }
+// `notes`: its notes field (`bd note` appends to it). `hub`: in the shared hub,
+// where its `repo:` label places it on the Board (the sheet does not change it).
+export interface BeadInfo { id: string, status: string, priority: number, type: string, assignee: string, labels: string[], comments: number, notes: string, hub?: boolean }
 
 // The panes wherdr adds to `details`: its agent's, and its reviewer's while a
 // review runs (1.x `reviewing`, or `reviewneeds` when the reviewer shows a

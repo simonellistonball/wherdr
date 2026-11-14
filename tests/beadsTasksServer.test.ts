@@ -149,6 +149,43 @@ describe('the Board', () => {
   })
 })
 
+describe('labels and notes', () => {
+  it('adds and removes labels, then appends a note, on the bead’s own database', async () => {
+    await D.readBoard()
+    const r = await D.boardEditBead('', 'web/demo-fha', { add: ['ui', 'needs review'], remove: ['old'], note: '  Blocked on the API key  ' })
+    expect(r.msg).toBe('Labels saved · Note added')
+    expect(calls.slice(-2)).toEqual([
+      { dir: home, hub: true, args: ['update', '--add-label=ui', '--add-label=needs review', '--remove-label=old', '--', 'demo-fha'] },
+      { dir: home, hub: true, args: ['update', '--append-notes=Blocked on the API key', '--', 'demo-fha'] },
+    ])
+    await D.boardEditBead('', 'demo-app/app-k2', { note: 'Local' })
+    expect(calls.at(-1)).toEqual({ dir: repo, hub: false, args: ['update', '--append-notes=Local', '--', 'app-k2'] })
+  })
+  it('keeps a hub issue’s repo label, not a repo database’s', async () => {
+    await D.readBoard()
+    await expect(D.boardEditBead('', 'web/demo-fha', { remove: ['repo:web'] })).rejects.toThrow('repo: label')
+    await D.boardEditBead('', 'demo-app/app-k2', { remove: ['repo:elsewhere'] })
+    expect(calls.at(-1)!.args).toEqual(['update', '--remove-label=repo:elsewhere', '--', 'app-k2'])
+  })
+  it('refuses bad labels and empty changes before running bd', async () => {
+    await D.readBoard()
+    const before = calls.length
+    await expect(D.boardEditBead('', 'web/demo-fha', { add: ['a,b'] })).rejects.toThrow('Invalid label')
+    await expect(D.boardEditBead('', 'web/demo-fha', { add: 'ui' })).rejects.toThrow('Invalid label')
+    await expect(D.boardEditBead('', 'web/demo-fha', { note: '   ' })).rejects.toThrow('Nothing to change')
+    await expect(D.boardEditBead('', 'web/--json', { note: 'x' })).rejects.toThrow('Invalid task')
+    expect(calls.length).toBe(before)
+  })
+  it('says whether the bead is in the hub in its details', async () => {
+    await D.readBoard()
+    expect((await D.boardTaskDetails('', 'web/demo-fha')).bead).toMatchObject({ hub: true, notes: 'Changelog drafted' })
+  })
+  it('is for beads boards only', async () => {
+    pluginStatus = 'ready'
+    await expect(D.boardEditBead('', 'web/demo-fha', { note: 'x' })).rejects.toThrow('beads tasks only')
+  })
+})
+
 describe('Start and replies', () => {
   it('opens an agent in a worktree of the repo’s folder, then marks the bead started', async () => {
     await D.readBoard()

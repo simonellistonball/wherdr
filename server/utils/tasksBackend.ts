@@ -1,7 +1,7 @@
 // The Board's backend on each machine: herdr-projects (server/utils/projectsTasks.ts)
 // or beads (server/utils/beadsTasks.ts). The routes that both backends serve
 // (the list, a task's details, add, describe, reply, Start, Archive, Restore)
-// come through here; herdr-projects-only routes (coordinators, approve, review,
+// come through here, with beads' own labels and notes; herdr-projects-only routes (coordinators, approve, review,
 // limits, autopilot…) stay on projectsTasks, which refuses them on a machine
 // without herdr-projects.
 //
@@ -14,6 +14,7 @@ import { type BeadRef, type BeadRefsReply, type TasksBackend, isTasksBackend } f
 import type { MachineTasks, StartOptions, TaskDetails, TaskPanes, TaskRow, TasksBoard } from '../../shared/projectsTasks'
 import type { SearchableBoard } from '../../shared/taskSearch'
 import { machineFor } from './actions'
+import { HerdrError } from './herdr'
 import { type Machine, baseMachines } from './machines'
 import * as projects from './projectsTasks'
 import * as beads from './beadsTasks'
@@ -87,6 +88,12 @@ export async function boardTell(machine: unknown, id: unknown, text: unknown) {
 export async function boardDescribe(machine: unknown, id: unknown, text: unknown) {
   const { m, beads: b } = await isBeads(machine)
   return b ? beads.describeBead(m, id, text) : projects.describeTask(machine, id, text)
+}
+// A bead's labels and notes (beads only: herdr-projects tasks have neither).
+export async function boardEditBead(machine: unknown, id: unknown, body: { add?: unknown, remove?: unknown, note?: unknown }) {
+  const { m, beads: b } = await isBeads(machine)
+  if (!b) throw new HerdrError('bad_action', 'Labels and notes are for beads tasks only')
+  return beads.editBead(m, id, body)
 }
 export async function boardCommand(machine: unknown, id: unknown, action: unknown, agent?: unknown, after?: unknown, effort?: unknown) {
   const { m, beads: b } = await isBeads(machine)

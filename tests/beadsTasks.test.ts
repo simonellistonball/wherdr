@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
-  assigneeAgent, beadActions, beadAgentName, createArgs, onBeadBranch, startBranch, groupOfStatus, isBeadId, parseBeadDetails, parseBeadList, parseWhere, repoOfLabels, startPrompt,
+  assigneeAgent, beadActions, beadAgentName, cleanLabel, cleanLabels, createArgs, labelsArgs, noteArgs, onBeadBranch, startBranch, groupOfStatus, isBeadId, parseBeadDetails, parseBeadList, parseWhere, repoOfLabels, startPrompt,
 } from '../shared/beadsTasks'
 import { isTaskId, sortTasks, taskActions, taskKey } from '../shared/projectsTasks'
 
@@ -68,8 +68,8 @@ describe('bd show', () => {
   const d = parseBeadDetails(rec('show.json'), 'web/demo-fha', rec('comments.json'))
   it('reads its description, notes and comments', () => {
     expect(d).toMatchObject({ id: 'web/demo-fha', title: 'Ship the release', description: 'Tag and publish.', stage: 'open' })
-    expect(d.summary).toBe('Changelog drafted\n\nalice: Waiting on CI')
-    expect(d.bead).toMatchObject({ id: 'demo-fha', status: 'open', labels: ['repo:web'], comments: 1 })
+    expect(d.summary).toBe('alice: Waiting on CI')
+    expect(d.bead).toMatchObject({ id: 'demo-fha', status: 'open', labels: ['repo:web'], comments: 1, notes: 'Changelog drafted' })
   })
   it('names what it waits for, and which are still open', () => {
     expect(d.after).toEqual({ waitsFor: ['demo-8tu'], left: ['demo-8tu'], waiting: true, forYou: '', titles: { 'demo-8tu': 'Set up CI' } })
@@ -94,6 +94,19 @@ describe('what the Board offers on a bead', () => {
 describe('commands and helpers', () => {
   it('keeps the user’s words out of flags', () => {
     expect(createArgs({ title: '--force', description: '-d x', repoLabel: 'web' })).toEqual(['create', '--json', '--description=-d x', '--labels=repo:web', '--', '--force'])
+  })
+  it('edits labels and appends notes with the user’s words after `=`', () => {
+    expect(labelsArgs('demo-fha', ['needs review', '-x'], ['old'])).toEqual(['update', '--add-label=needs review', '--add-label=-x', '--remove-label=old', '--', 'demo-fha'])
+    expect(noteArgs('demo-fha', '--status=closed')).toEqual(['update', '--append-notes=--status=closed', '--', 'demo-fha'])
+  })
+  it('takes labels bd keeps as one: no comma, quote or line break', () => {
+    expect(cleanLabel('  ui ')).toBe('ui')
+    expect(cleanLabel('area:web')).toBe('area:web')
+    for (const bad of ['', '  ', 'a,b', 'a"b', 'a\'b', 'a\nb', 'x'.repeat(81), 3]) expect(cleanLabel(bad)).toBeNull()
+    expect(cleanLabels(undefined)).toEqual([])
+    expect(cleanLabels(['a', 'a', 'b'])).toEqual(['a', 'b'])
+    expect(cleanLabels(['a', 'b,c'])).toBeNull()
+    expect(cleanLabels('a')).toBeNull()
   })
   it('reads repo labels, statuses, assignees and `bd where`', () => {
     expect(repoOfLabels(['src:gitea', 'repo:support'])).toBe('support')
