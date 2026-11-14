@@ -1,4 +1,4 @@
 // A message to a task's agent: `{ machine, id, text }` (`herdr-projects tell`).
-import { tellTask } from '../../utils/projectsTasks'
+import { boardTell } from '../../utils/tasksBackend'
 
-export default defineApi((_event, b) => tellTask(b.machine ?? '', b.id, b.text))
+export default defineApi((_event, b) => boardTell(b.machine ?? '', b.id, b.text))

@@ -3,6 +3,6 @@
 // `agent`: Start only, that agent for this start (`--worker.agent`), a model
 // with it (`codex/gpt-6-sol`); `effort`: Start only, its level (`--worker.effort`).
 // `after`: Start only, the tasks to wait for first (`--after`, ids or keys).
-import { taskCommand } from '../../utils/projectsTasks'
+import { boardCommand } from '../../utils/tasksBackend'
 
-export default defineApi((_event, b) => taskCommand(b.machine ?? '', b.id, b.action, b.agent, b.after, b.effort))
+export default defineApi((_event, b) => boardCommand(b.machine ?? '', b.id, b.action, b.agent, b.after, b.effort))

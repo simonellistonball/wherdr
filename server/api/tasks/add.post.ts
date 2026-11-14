@@ -1,4 +1,4 @@
 // A new task: `{ machine, title, description?, repo?, delegate?, type?, planApprove? }` (`herdr-projects add`).
-import { addTask } from '../../utils/projectsTasks'
+import { boardAdd } from '../../utils/tasksBackend'
 
-export default defineApi((_event, b) => addTask(b.machine ?? '', b))
+export default defineApi((_event, b) => boardAdd(b.machine ?? '', b))

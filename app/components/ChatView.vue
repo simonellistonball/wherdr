@@ -27,6 +27,28 @@ import { isAutopilotWake } from '~/utils/autopilotWake'
 import { stripPosition } from '#shared/filePaths'
 
 const props = defineProps<{ pane: Pane, localQueued: OutboxItem[] }>()
+
+// Beads named in replies link to their agent, or to the bead on the Board
+// (utils/beadLinks.ts). The links follow the Board: one pass per HTML and refs.
+let beadHtml = new Map<string, string>()
+watch(beadRefs, () => { beadHtml = new Map() })
+function withBeads(html: string): string {
+  const known = beadRefs.value
+  if (!known.size) return html
+  let out = beadHtml.get(html)
+  if (out === undefined) {
+    out = linkBeadMentions(html, known, props.pane.id)
+    if (beadHtml.size > 2000) beadHtml = new Map()
+    beadHtml.set(html, out)
+  }
+  return out
+}
+function openBead(id: string) {
+  const ref = beadRefs.value.get(id)
+  if (!ref) return
+  const agent = ref.pane && ref.pane !== props.pane.id && herdrState.value.panes.some(p => p.id === ref.pane) ? ref.pane : null
+  void navigateTo(agent ? panePath(agent) : { path: '/board', query: { machine: ref.machine, task: ref.id } })
+}
 // A version of a reply replaced while the agent writes takes its question marks with it.
 onMdDropped(forgetReply)
 const route = useRoute()
@@ -48,6 +70,8 @@ interface ChatData {
 const fresh = (): ChatData => ({ file: null, token: '', tailStart: null, older: [], olderCursor: 0, tail: [], queue: [] })
 const chat = shallowRef<ChatData>(fresh())
 const items = computed(() => chat.value.older.concat(chat.value.tail))
+// The beads it can link to, read again (at most every 15 s) as the conversation grows.
+watch(() => items.value.length, () => { void loadBeadRefs() }, { immediate: true })
 const unavailable = ref<ChatResponse['reason'] | null>(null)
 // With 'no_integration': what to install, and where (see shared/integrations.ts).
 const integration = ref<ChatResponse['integration'] | null>(null)
@@ -796,6 +820,8 @@ function onListClick(e: MouseEvent) {
   const asked = replyStyle.value === 'text' && !readOnly.value ? target.closest?.('.q-text') as HTMLElement | null : null
   const askedBtn = asked && window.getSelection()?.isCollapsed !== false ? buttonOf(asked) : null
   if (askedBtn) { e.preventDefault(); arm(null); quote(refOf(askedBtn)); return }
+  const beadEl = target.closest?.('.md-body .md-bead') as HTMLElement | null
+  if (beadEl?.dataset.bead) { e.preventDefault(); openBead(beadEl.dataset.bead); return }
   const pathEl = target.closest?.('.md-body .md-path') as HTMLElement | null
   if (pathEl) { e.preventDefault(); openPathMenu(pathEl); return }
   const cmdEl = target.closest?.('.md-body .md-cmd') as HTMLElement | null
@@ -904,6 +930,8 @@ async function downloadFile(p: string) {
 function onListKey(e: KeyboardEvent) {
   if (e.key === 'Escape' && (pickKey.value || armed)) { pickKey.value = null; arm(null); return }
   if (e.key !== 'Enter' && e.key !== ' ') return
+  const bead = (e.target as HTMLElement).closest?.('.md-body .md-bead') as HTMLElement | null
+  if (bead?.dataset.bead) { e.preventDefault(); openBead(bead.dataset.bead); return }
   const el = (e.target as HTMLElement).closest?.('.md-body .md-path, .md-body .md-cmd') as HTMLElement | null
   if (!el) return
   e.preventDefault()
@@ -1409,7 +1437,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                   :ui="{ root: `msg msg-ai tw-${pane.agent || 'agent'}${canRun ? ' can-run' : ''}${pickKey === b.key ? ' q-picking' : ''}`, container: 'msg-c', content: 'md' }"
                 >
                   <template #content>
-                    <ChatMarkdown :html="b.html" :typing="typingAt(b.id)" @done="typingDone(b.id)" />
+                    <ChatMarkdown :html="withBeads(b.html)" :typing="typingAt(b.id)" @done="typingDone(b.id)" />
                   </template>
                 </UChatMessage>
                 <div v-if="replyStyle === 'list' && !readOnly && typingAt(b.id) === null && (replyTargets(b.html).questions.length || replyTargets(b.html).pick)" class="q-bar">
@@ -1498,7 +1526,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
               </div>
               <div v-else-if="b.k === 'notice'" class="msg-notice" :class="{ long: b.long, open: isOpen(b.key), scheduled: b.scheduled }">
                 <div class="msg-notice-head"><UIcon :name="b.icon" /><span>{{ b.label }}</span></div>
-                <ChatMarkdown class="msg-notice-body md" :html="b.html" :typing="null" />
+                <ChatMarkdown class="msg-notice-body md" :html="withBeads(b.html)" :typing="null" />
                 <button v-if="b.long" type="button" class="msg-shell-more" :aria-expanded="isOpen(b.key)" @click="setOpen(b.key, !isOpen(b.key))">
                   <UIcon :name="isOpen(b.key) ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" />
                   <span>{{ isOpen(b.key) ? t('Collapse') : t('Show all') }}</span>

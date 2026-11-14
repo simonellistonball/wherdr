@@ -1,7 +1,7 @@
 // One herdr-projects task: `?machine=<key>&id=<repo>/<n>` (`details --json`).
-import { taskDetails } from '../../utils/projectsTasks'
+import { boardTaskDetails } from '../../utils/tasksBackend'
 
 export default defineApi(async (event) => {
   const q = getQuery(event)
-  return taskDetails(q.machine ?? '', q.id)
+  return boardTaskDetails(q.machine ?? '', q.id)
 })

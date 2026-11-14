@@ -295,7 +295,7 @@ function shown(machine: string, c: Cached): Pick<MachineTasks, 'tasks' | 'at' | 
 // `fresh`: the Board just opened (or asked to): check the plugin again rather
 // than trust the last answer, so an install or update shows at once.
 const after = (ms: number) => new Promise<null>(resolve => setTimeout(() => resolve(null), Math.max(0, ms)).unref?.())
-async function machineTasks(m: Machine, fresh = false): Promise<MachineTasks | null> {
+export async function machineTasks(m: Machine, fresh = false): Promise<MachineTasks | null> {
   const started = Date.now()
   const last = lists.get(m.key)
   if (!m.local && m.status !== 'online') {

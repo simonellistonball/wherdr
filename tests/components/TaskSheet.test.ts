@@ -1090,3 +1090,41 @@ it('keeps research and conversation badges exclusive for typed tasks', async () 
   expect(w.findAll('.task-chip').map(chip => chip.text())).not.toContain('Conversation')
   w.unmount()
 })
+
+describe('a beads issue', () => {
+  const bead: TaskRow = {
+    id: 'web/demo-fha', repo: 'web', n: 1, state: 'idle', kind: '', stage: 'open', title: 'Ship the release', msg: '', app: '',
+    progress: null, eta: null, pr: '', review: null, reviewRound: 0, research: false, archived: false, queue: null, group: 'todo', backend: 'beads',
+  }
+  it('names it by its id, offers Start and Close, and nothing herdr-projects-only', async () => {
+    const was = startReply
+    startReply = { agent: { value: 'claude', kind: 'claude', place: 'builtin', from: 'wherdr' }, agents: ['claude', 'codex'], slots: null }
+    Object.assign(shown, { stage: 'open', failure: '', failureStage: '' })
+    modelsAsked.length = 0
+    const w = await mountSuspended(TaskSheet, { props: { task: bead, machine: 'a', open: true } })
+    await flushPromises()
+    const buttons = [...document.querySelectorAll('button')].map(b => b.textContent?.trim() || '')
+    expect(document.body.textContent).toContain('demo-fha')
+    expect(buttons.some(t => t.startsWith('Start'))).toBe(true)
+    expect(buttons).toContain('Close')
+    expect(buttons).not.toContain('Archive')
+    expect(buttons).not.toContain('Start after…')
+    expect(buttons).not.toContain('Ask the coordinator')
+    expect(document.body.textContent).toContain('wherdr’s default')
+    // No herdr-projects `models` for a beads Start.
+    expect(modelsAsked).toEqual([])
+    startReply = was
+    Object.assign(shown, { stage: 'approval' })
+    w.unmount()
+  })
+  it('offers Reopen once closed', async () => {
+    Object.assign(shown, { stage: 'closed', failure: '', failureStage: '' })
+    const w = await mountSuspended(TaskSheet, { props: { task: { ...bead, state: 'done', stage: 'closed', group: 'done' }, machine: 'a', open: true } })
+    await flushPromises()
+    const buttons = [...document.querySelectorAll('button')].map(b => b.textContent?.trim() || '')
+    expect(buttons).toContain('Reopen')
+    expect(buttons).not.toContain('Close')
+    Object.assign(shown, { stage: 'approval' })
+    w.unmount()
+  })
+})

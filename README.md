@@ -55,6 +55,7 @@ Tailscale; never expose it to the public Internet. Read [Security](docs/security
 - **[Claude and Codex quotas](docs/quotas.md)** — Show remaining usage and handle Codex updates, limits and restarts.
 - **[Notifications](docs/notifications.md)** — Enable Web Push, relay Herdr notifications and configure Do not disturb.
 - **[Board and coordinators](docs/board.md)** — Work with herdr-projects tasks, reviews, approvals and coordinators across machines.
+- **[Board with beads](docs/beads.md)** — Run the Board on [beads](https://github.com/steveyegge/beads) issues instead of herdr-projects, and start agents on them.
 - **[Security](docs/security.md)** — Understand remote-shell access, passkeys and network restrictions. Read this before enabling remote access.
 - **[Development and tests](docs/development.md)** — Run from source and follow the contribution and agent test rules.
 - **[Troubleshooting](docs/troubleshooting.md)** — Resolve startup, permissions, network, SSH and conversation problems.

@@ -1,0 +1,33 @@
+[
+  {
+    "id": "demo-fha",
+    "title": "Ship the release",
+    "description": "Tag and publish.",
+    "notes": "Changelog drafted",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-11-13T20:30:41Z",
+    "updated_at": "2026-11-13T20:30:41Z",
+    "labels": [
+      "repo:web"
+    ],
+    "dependencies": [
+      {
+        "id": "demo-8tu",
+        "title": "Set up CI",
+        "status": "open",
+        "priority": 2,
+        "issue_type": "task",
+        "created_at": "2026-11-13T20:30:40Z",
+        "updated_at": "2026-11-13T20:30:40Z",
+        "dependency_type": "blocks"
+      }
+    ],
+    "dependent_count": 0,
+    "dependency_count": 1,
+    "comment_count": 1,
+    "comments_omitted": true,
+    "revision": "-549622513980457947"
+  }
+]

@@ -14,7 +14,7 @@ import { getState, poll } from './state'
 type Json = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 const opts = { trust_repository: true }
 
-async function machineWorktrees(m: Machine): Promise<WorktreeInfo[]> {
+export async function machineWorktrees(m: Machine): Promise<WorktreeInfo[]> {
   const st = getState()
   const mine = st.panes.filter(p => splitId(p.id).machine === m.key)
   // Pane folders, then the 12 most recent ones (each scan is a Herdr call, slow over SSH).

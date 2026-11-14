@@ -146,6 +146,9 @@ const review = computed(() => details.value?.review || props.task?.review || nul
 // Working: an agent running, or the board waiting for CI or for its turn.
 const activity = computed(() => (props.task ? taskActivity(props.task) : null))
 const label = computed(() => (props.task ? taskKey(props.task.id, props.task.repoKey) : ''))
+// A beads issue (shared/beadsTasks.ts): Archive closes it, Restore reopens it,
+// and Start opens an agent on it without waiting for other tasks.
+const beads = computed(() => props.task?.backend === 'beads')
 // Offered when it has an agent to talk to (its pane, as its details name it),
 // or one herdr-projects takes a reply for (`tell`), pane or not.
 const chatShown = computed(() => !archived.value && (Boolean(failure.value?.pane) || actions.value.tell))
@@ -186,7 +189,7 @@ function agentSource(): string {
     case 'task': return tl('Default set on this task', 'Défaut réglé sur cette tâche')
     case 'repo': return tl(`Default from your settings for ${repo}`, `Défaut de tes réglages pour ${repo}`)
     case 'you': return tl('Default from your settings', 'Défaut de tes réglages')
-    case 'builtin': return tl('herdr-projects’ built-in default', 'Défaut intégré de herdr-projects')
+    case 'builtin': return beads.value ? tl('wherdr’s default') : tl('herdr-projects’ built-in default', 'Défaut intégré de herdr-projects')
     default: return tl(`Default: ${a.from}`, `Défaut : ${a.from}`)
   }
 }
@@ -625,7 +628,7 @@ function chat() {
       </section>
       <TaskLimitGauges v-if="details?.limits" :limits="details.limits" />
 
-      <section v-if="!archived" class="task-sheet-block">
+      <section v-if="!archived && !beads" class="task-sheet-block">
         <div class="task-sheet-actions">
           <UButton color="neutral" variant="outline" icon="i-lucide-message-circle-question-mark" :aria-expanded="asking" :disabled="busy || offlineView" @click="asking = !asking">{{ tl('Ask the coordinator', 'Demander au coordinateur') }}</UButton>
           <UButton color="neutral" variant="ghost" :disabled="busy || offlineView" @click="coordinator">{{ tl('Coordinator replies', 'Réponses du coordinateur') }}</UButton>
@@ -651,7 +654,8 @@ function chat() {
         >
           <AgentAvatar v-if="a.id || startOpts?.agent" :agent="a.id || defaultKind" /><span class="task-start-name">{{ a.label }}</span><small v-if="a.isDefault">{{ defaultTag(a) }}</small>
         </button>
-        <span v-if="startOpts && startProgram && !offlineView" class="task-start-model">
+        <!-- A beads Start opens the program with its own model (no herdr-projects `models`). -->
+        <span v-if="startOpts && startProgram && !offlineView && !beads" class="task-start-model">
           <span class="task-start-label">{{ tl('Model', 'Modèle') }}</span>
           <ModelPicker :key="`${target()}|${startProgram}`" v-model:model="startModel" v-model:effort="startEffort" :launch="{ machine, program: startProgram }" />
         </span>
@@ -660,9 +664,9 @@ function chat() {
         <span v-if="startName" class="task-start-from">{{ tl('For this start only: the default stays.', 'Pour ce lancement seulement : le défaut ne change pas.') }}</span>
       </div>
       <div v-if="chatShown || actions.approve || actions.delegate || actions.retry || actions.finish || actions.stop || actions.archive || actions.restore" class="task-sheet-actions">
-        <UButton v-if="actions.restore" color="primary" icon="i-lucide-archive-restore" :loading="running === 'restore'" :disabled="busy || offlineView" @click="act('restore')">{{ tl('Restore', 'Restaurer') }}</UButton>
+        <UButton v-if="actions.restore" color="primary" icon="i-lucide-archive-restore" :loading="running === 'restore'" :disabled="busy || offlineView" @click="act('restore')">{{ beads ? tl('Reopen') : tl('Restore', 'Restaurer') }}</UButton>
         <UButton v-if="actions.delegate" color="primary" :icon="place ? 'i-lucide-list-ordered' : 'i-lucide-play'" class="task-start" :loading="running === 'delegate' && !picking" :disabled="busy || offlineView || needsPick" @click="act('delegate')">{{ startLabel() }}</UButton>
-        <UButton v-if="actions.delegate" color="primary" variant="outline" icon="i-lucide-hourglass" class="task-start-after" :aria-expanded="picking" :disabled="busy || offlineView || needsPick" @click="picking ? closePicker() : openPicker()">{{ tl('Start after…', 'Démarrer après…') }}</UButton>
+        <UButton v-if="actions.delegate && !beads" color="primary" variant="outline" icon="i-lucide-hourglass" class="task-start-after" :aria-expanded="picking" :disabled="busy || offlineView || needsPick" @click="picking ? closePicker() : openPicker()">{{ tl('Start after…', 'Démarrer après…') }}</UButton>
         <UButton v-if="actions.approve" color="primary" icon="i-lucide-check" :loading="busy && !running" :disabled="busy || offlineView" @click="approve">
           {{ task.stage === 'plan' ? tl('Approve plan', 'Accepter le plan') : tl('Approve', 'Approuver') }}
         </UButton>
@@ -676,7 +680,7 @@ function chat() {
           {{ tl('Open the chat', 'Ouvrir la discussion') }}
         </UButton>
         <UButton v-if="actions.stop" color="error" variant="outline" icon="i-lucide-square" :loading="running === 'stop'" :disabled="busy || offlineView" @click="act('stop')">{{ tl('Stop', 'Arrêter') }}</UButton>
-        <UButton v-if="actions.archive" color="neutral" variant="ghost" icon="i-lucide-archive" class="task-archive" :loading="running === 'archive'" :disabled="busy || offlineView" @click="act('archive')">{{ tl('Archive', 'Archiver') }}</UButton>
+        <UButton v-if="actions.archive" color="neutral" variant="ghost" :icon="beads ? 'i-lucide-circle-check' : 'i-lucide-archive'" class="task-archive" :loading="running === 'archive'" :disabled="busy || offlineView" @click="act('archive')">{{ beads ? tl('Close') : tl('Archive', 'Archiver') }}</UButton>
       </div>
       <p v-if="resuming" role="status">{{ tl('Resuming…', 'Reprise…') }}</p>
       <p v-if="limitStopped && embedded" class="task-finish-why">{{ finishWhy }}</p>
