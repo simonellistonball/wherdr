@@ -7,7 +7,7 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { READ_SCRIPT } from '../server/utils/files'
 import type { Machine } from '../server/utils/machines'
-import { VIDEO_BLOCK, answer, cutOnError, openVideo, openWrittenVideo, parseRange, readPlan, videoEtag } from '../server/utils/videoStream'
+import { STREAM_SCRIPT, VIDEO_BLOCK, answer, cutOnError, openVideo, openWrittenVideo, parseRange, readPlan, videoEtag } from '../server/utils/videoStream'
 
 const local = { exec: null } as unknown as Machine
 let root = ''
@@ -150,6 +150,22 @@ describe('video stream', () => {
     const head = await openVideo(local, root, 'clip.webm')
     head.close()
     await head.done
+  })
+
+  // Its server gone (stdin at EOF) or nothing to read: the script ends by
+  // itself. macOS's bash 3.2 once spun at 100% CPU on these `exit`s, forever.
+  it('ends on its own when stdin closes or nothing is asked', async () => {
+    for (const input of ['', '0 0\n']) {
+      const c = spawn('sh', ['-c', STREAM_SCRIPT, 'sh', root, 'long.webm'], { stdio: ['pipe', 'pipe', 'ignore'] })
+      c.stdout.resume()
+      c.stdin.end(input)
+      const code = await Promise.race([
+        new Promise(resolve => c.once('close', resolve)),
+        new Promise(resolve => setTimeout(() => resolve('running'), 2000)),
+      ])
+      if (code === 'running') c.kill('SIGKILL')
+      expect(code).toBe(0)
+    }
   })
 
   it('refuses a file whose signature is not its extension, and paths outside', async () => {

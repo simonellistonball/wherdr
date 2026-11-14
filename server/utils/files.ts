@@ -101,7 +101,11 @@ done
 under "$f" || { echo "outside" >&2; exit 5; }
 [ -f "$f" ] || { echo "not a file" >&2; exit 6; }
 [ -r "$f" ] || { echo "permission denied" >&2; exit 7; }
-command exec 3< "$f" || { echo "permission denied" >&2; exit 7; }
+# Opened once in a subshell first: a refused open there ends only the
+# subshell (exec's redirection is fatal to a POSIX shell). Never \`command exec\`:
+# after it, macOS's /bin/sh (bash 3.2) spins at 100% CPU on any later \`exit\`.
+( exec 3< "$f" ) 2>/dev/null || { echo "permission denied" >&2; exit 7; }
+exec 3< "$f" || exit 7
 # "<inode> <size> <mtime> <version>" of the opened file, from its metadata:
 # never a read (BusyBox's wc -c reads every byte). <version>: modification
 # and change times to the nanosecond (GNU/BusyBox, then BSD). Without the
