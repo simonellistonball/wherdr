@@ -1,6 +1,7 @@
 // Global app state: live agents (WebSocket /ws/events), device
 // settings, lock, API calls. Module singletons (client app).
 import { createSocketProbe } from '~/utils/socketProbe'
+import { GET_DEADLINE_MS, skipWhileBusy, withDeadline } from '~/utils/requestGuards'
 import { DESK_QUERY, SLIM_QUERY, TABLET_QUERY, provesHardwareKeyboard } from '~/utils/layoutMode'
 import type { AppConfig, AuthStatus, HerdrState, MachineConfig, MachineInfo, NamedSession, Pane, Quotas } from '#shared/types'
 import { LOCAL, splitId } from '#shared/ids'
@@ -96,6 +97,7 @@ async function checkSelectedSessions() {
     } catch { /* machine temporarily unreachable */ }
   }
 }
+const checkSessionsTick = skipWhileBusy(checkSelectedSessions)
 export const eventsOpen = ref(false)
 export const netDown = ref(false)
 export const cachedAt = ref<number | null>(null)
@@ -401,14 +403,22 @@ export class ApiError extends Error {
   }
 }
 
+// A GET also ends after GET_DEADLINE_MS (utils/requestGuards.ts): a stalled
+// connection must not keep reads open for ever.
 export async function api<T = Record<string, unknown>>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const deadline = body === undefined ? withDeadline(signal, GET_DEADLINE_MS) : null
+  const sig = deadline?.signal ?? signal
   const opts: RequestInit = body === undefined
-    ? { signal }
-    : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal }
-  const r = await fetch(path, opts)
-  // Aborted mid-body (deadline): a failure, not an empty answer (`{}` from the
-  // status check would read as "lock off").
-  const data = await r.json().catch(() => { signal?.throwIfAborted(); return {} })
+    ? { signal: sig }
+    : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: sig }
+  let r: Response
+  let data: Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+  try {
+    r = await fetch(path, opts)
+    // Aborted mid-body (deadline): a failure, not an empty answer (`{}` from the
+    // status check would read as "lock off").
+    data = await r.json().catch(() => { sig?.throwIfAborted(); return {} })
+  } finally { deadline?.done() }
   // Session expired or app locked: back through the passkey, but only once the
   // server confirms it (a single 401 is not enough to drop the user's screen).
   if (r.status === 401 && data.code === 'locked' && !path.startsWith('/api/auth/')) confirmLock()
@@ -656,7 +666,7 @@ export function boot() {
   booted = true
   locked.value = false
   connectEvents()
-  sessionsTimer ||= setInterval(checkSelectedSessions, 30000)
+  sessionsTimer ||= setInterval(checkSessionsTick, 30000)
   loadConfig()
   syncPushLanguage().catch(() => {})
 }

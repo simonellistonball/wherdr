@@ -14,6 +14,7 @@
 // coordinator at its top, then one group per repo as Herdr's sidebar draws it
 // (the repo's space, its project coordinator, its tasks' spaces), then the
 // state groups of everything else.
+import { skipWhileBusy } from '~/utils/requestGuards'
 import type { MachineInfo, NamedSession, Pane } from '#shared/types'
 import { type ReadySort, type Row, readyLists, rowGroup, sortReady, spaceRows } from '#shared/spaces'
 import { spaceTitle } from '#shared/displayTitles'
@@ -346,7 +347,9 @@ async function refreshAwake(m: MachineInfo) {
   catch { /* the machine may disappear between two polls */ }
 }
 let awakeTimer: ReturnType<typeof setInterval> | undefined
-onMounted(() => { awakeTimer = setInterval(() => { if (document.visibilityState === 'visible') for (const m of awakeMachines()) refreshAwake(m) }, 30000) })
+// A tick starts nothing while the last round is still out (utils/requestGuards.ts).
+const awakeTick = skipWhileBusy(() => Promise.all(awakeMachines().map(refreshAwake)))
+onMounted(() => { awakeTimer = setInterval(() => { if (document.visibilityState === 'visible') awakeTick() }, 30000) })
 onBeforeUnmount(() => clearInterval(awakeTimer))
 function openAwake(m: MachineInfo) {
   awakeTarget.value = m

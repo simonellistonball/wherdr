@@ -2,6 +2,7 @@
 // waiting service worker, periodic check of the served build.
 // Pure logic and anti-loop guard: app/utils/appVersion.ts.
 import { installedSwAction, isNewBuild, mayReloadForChunk } from '../utils/appVersion'
+import { GET_DEADLINE_MS } from '../utils/requestGuards'
 
 export const newVersionReady = ref(false)
 export const newVersionDismissed = ref(false)
@@ -45,7 +46,7 @@ export function registerServiceWorker() {
 // the served build: reload once, right away, before anything is typed.
 async function startupBuildCheck() {
   try {
-    const res = await fetch(`/_nuxt/builds/latest.json?${Date.now()}`, { cache: 'no-store' })
+    const res = await fetch(`/_nuxt/builds/latest.json?${Date.now()}`, { cache: 'no-store', signal: AbortSignal.timeout(GET_DEADLINE_MS) })
     if (!res.ok || !isNewBuild(useRuntimeConfig().app.buildId, await res.json())) return
     let storage: Storage | null = null
     try { storage = sessionStorage } catch { /* unavailable */ }

@@ -5,6 +5,7 @@ import type { Quotas } from '#shared/types'
 import { readQuotas, saveQuotas } from '~/utils/offlineCache'
 import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'
 import { claudeInstallCommand, claudeSetupRows, claudeSuggestion } from '~/utils/quotas'
+import { skipWhileBusy } from '~/utils/requestGuards'
 
 export const quotaNow = ref(Date.now())
 
@@ -18,12 +19,15 @@ export async function reloadQuotas() {
   quotaNow.value = Date.now()
 }
 
+// A tick starts nothing while the last read is still out (utils/requestGuards.ts).
+const quotaTick = skipWhileBusy(reloadQuotas)
+
 export function useQuotaLoader() {
   let timer: ReturnType<typeof setInterval> | null = null
   onMounted(() => {
     if (mayReadOffline(readOfflineAccess())) readQuotas().then((q) => { if (!homeQuotas.value) homeQuotas.value = q })
     if (showQuotas.value) reloadQuotas()
-    timer = setInterval(() => { if (pageVisible.value && showQuotas.value) reloadQuotas() }, 60000)
+    timer = setInterval(() => { if (pageVisible.value && showQuotas.value) quotaTick() }, 60000)
   })
   onUnmounted(() => { if (timer) clearInterval(timer) })
   watch([pageVisible, showQuotas], ([v, on]) => { if (v && on) reloadQuotas() })

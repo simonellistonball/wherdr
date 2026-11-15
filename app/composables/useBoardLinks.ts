@@ -4,6 +4,7 @@
 // again when Herdr's spaces change (a task's space opens). Kept at module
 // level: the list comes back with the last links at once.
 import { type BoardLinks, type BoardLinksReply, type MachineLinks, resolveCoordinators } from '#shared/boardLinks'
+import { skipWhileBusy } from '~/utils/requestGuards'
 
 const POLL_MS = 15000
 const links = shallowRef<BoardLinks | null>(null)
@@ -21,6 +22,9 @@ async function load() {
   } catch { /* the list stays as it is: ungrouped rows are still listed */ }
 }
 
+// A tick starts nothing while the last read is still out (utils/requestGuards.ts).
+const tick = skipWhileBusy(load)
+
 // The links read, each coordinator on the pane Herdr shows it in now (its
 // file's ids may be those of a pane closed since: resolveCoordinators).
 const resolved = computed<MachineLinks[]>(() => resolveCoordinators(links.value?.machines ?? [], herdrState.value.panes))
@@ -33,7 +37,7 @@ export function useBoardLinks() {
   onMounted(() => {
     if (!users++) {
       load()
-      poll = setInterval(() => { if (document.visibilityState === 'visible') load() }, POLL_MS)
+      poll = setInterval(() => { if (document.visibilityState === 'visible') tick() }, POLL_MS)
     }
   })
   onBeforeUnmount(() => { if (!--users) clearInterval(poll) })

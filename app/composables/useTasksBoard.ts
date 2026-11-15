@@ -10,6 +10,7 @@
 import type { TasksBoard, TasksReply } from '#shared/projectsTasks'
 import { readBoard, saveBoard } from '~/utils/offlineCache'
 import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'
+import { skipWhileBusy } from '~/utils/requestGuards'
 
 const POLL_MS = 15000
 const SOON_MS = 1500
@@ -62,7 +63,9 @@ export function useTasksBoard() {
         if (s && !board.value && !stopped) { board.value = s.board; cachedAt.value = s.at }
       })
     }
-    poll = setInterval(() => { if (document.visibilityState === 'visible') load() }, POLL_MS)
+    // A tick starts nothing while the last read is still out (utils/requestGuards.ts).
+    const tick = skipWhileBusy(() => load())
+    poll = setInterval(() => { if (document.visibilityState === 'visible') tick() }, POLL_MS)
   })
   onBeforeUnmount(() => {
     stopped = true
