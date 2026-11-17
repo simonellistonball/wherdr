@@ -345,6 +345,10 @@ async function taskAction(action: TaskCommand | 'approve' | 'anyway') {
   if ((action === 'approve' || action === 'anyway') && !await askConfirm(
     action === 'anyway' ? tl('Approve despite the failed review or checks? This merges the work.', 'Approuver malgré la relecture ou les contrôles en échec ? Cela fusionne le travail.') : tl('Approve this task?', 'Approuver cette tâche ?'),
     action === 'anyway' ? tl('Approve anyway', 'Approuver quand même') : tl('Approve', 'Approuver'), 'primary')) return
+  // A bead's Start (quartermaster's dispatch where it is installed) claims it and opens a worktree and an agent.
+  if (action === 'delegate' && props.task?.backend === 'beads' && !await askConfirm(
+    tl(`Start an agent on ${props.task.id.split('/')[1] || ''} “${props.task.title}”? Where quartermaster is installed it dispatches the bead: claims it, opens its worktree and takes a worker slot.`),
+    tl('Start'), 'primary')) return
   if (props.target !== target || disabled.value) return
   actionBusy.value = true
   actionError.value = ''

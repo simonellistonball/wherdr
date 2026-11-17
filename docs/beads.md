@@ -56,7 +56,8 @@ This file holds credentials when your Dolt server needs them: keep it `chmod 600
 
 - **New task** runs `bd create`: in the repo's own database when it has one, else in the
   hub with a `repo:<name>` label.
-- **Start** opens an agent (the one picked, `claude` by default) in a new Herdr space, in
+- **Start** asks first, then hands a hub issue to quartermaster when the machine has it
+  (next section). Otherwise it opens an agent (the one picked, `claude` by default) in a new Herdr space, in
   a worktree on branch `bd/<id>` when the repo is a Git repository. The folder is the
   repo's own (its database's), or for a hub issue an open Herdr folder named after the
   repo, else `~/<repo>`, `~/src/<repo>` or `~/code/<repo>`. Its first message names the
@@ -77,6 +78,24 @@ This file holds credentials when your Dolt server needs them: keep it `chmod 600
 These go through `POST /api/tasks/bead` (`{ machine, id, add?, remove?, note? }`), which
 refuses herdr-projects tasks.
 - **Close** (`bd close`) and **Reopen** (`bd reopen`) take the place of Archive and Restore.
+
+## Start through quartermaster
+
+When `quartermaster version` answers on the machine, **Start** on a hub issue is
+**Dispatch**: wherdr runs `quartermaster dispatch <id>` (with `--agent <kind>` when an
+agent is picked for this start; otherwise quartermaster's own `worker_agent`). quartermaster
+then checks the issue's `repo:` label against its `repos`, picks the host and checks its
+free worker slots, claims the issue, opens its worktree on `<prefix><id>-<slug>` and briefs
+an agent named after it. When it refuses (no slot free, a repo it does not know, the issue
+is closed), the Board shows its message and wherdr starts nothing itself. quartermaster
+starts `claude`, `codex` or `muse`, so the sheet offers only those; a model picked with
+the agent is dropped.
+
+The sheet asks before either Start: it claims the issue and opens a worktree and an agent.
+
+Issues in a repo's own database, machines without quartermaster, and every machine when
+`WHERDR_BEADS_START=wherdr` is in the service's environment use wherdr's own Start
+(above). `GET /api/tasks/start` says which in `via` (`quartermaster` or `wherdr`).
 
 ## Agents started elsewhere (quartermaster)
 

@@ -3,7 +3,7 @@
 // databases are found, what runs where, and what Start opens.
 import os from 'node:os'
 import path from 'node:path'
-import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { localFs } from '../server/utils/fsx'
 
@@ -48,6 +48,9 @@ const rec = (f: string) => readFileSync(new URL(`./recordings/beads-1.3.2/${f}`,
 
 let calls: { dir: string, hub: boolean, args: string[] }[]
 let hubFound: boolean
+// quartermaster: missing unless a test installs it; what it was asked.
+let qm: ((args: string[]) => { code: number, stdout: string, stderr: string }) | null
+let qmCalls: string[][]
 beforeEach(() => {
   rmSync(home, { recursive: true, force: true })
   mkdirSync(path.join(repo, '.beads'), { recursive: true })
@@ -64,6 +67,13 @@ beforeEach(() => {
   pluginStatus = 'missing'
   B.resetBeadsCache()
   D.resetBackendChoices()
+  qm = null
+  qmCalls = []
+  delete process.env.WHERDR_BEADS_START
+  B.setQuartermasterRunner(async (_m, args) => {
+    qmCalls.push(args)
+    return qm ? qm(args) : { code: 127, stdout: '', stderr: 'quartermaster: not found' }
+  })
   B.setBeadsRunner(async (_m, dir, hub, args) => {
     calls.push({ dir, hub, args })
     const ok = (stdout: string) => ({ code: 0, stdout, stderr: '' })
@@ -218,6 +228,63 @@ describe('Start and replies', () => {
     await D.readBoard()
     expect((await D.boardTell('', 'web/demo-fha', 'Use the staging key')).msg).toBe('Sent to its agent')
     expect(sent).toEqual([{ pane: 'w9:p1', text: 'Use the staging key' }])
+  })
+})
+
+describe('Start through quartermaster', () => {
+  const dispatched = 'started claude on demo-fha (w3:p1, branch bead/demo-fha-ship-the-release)'
+  beforeEach(() => {
+    qm = args => (args[0] === 'version'
+      ? { code: 0, stdout: 'quartermaster 0.6.0\n', stderr: '' }
+      : { code: 0, stdout: `${dispatched}\n`, stderr: '' })
+  })
+  it('dispatches a hub bead: quartermaster claims it, wherdr opens nothing itself', async () => {
+    await D.readBoard()
+    const opts = await D.boardStartOptions('', 'web/demo-fha')
+    expect(opts).toMatchObject({ via: 'quartermaster', agent: { kind: 'claude', place: 'quartermaster' } })
+    const r = await D.boardCommand('', 'web/demo-fha', 'delegate')
+    expect(r.msg).toBe(dispatched)
+    expect(qmCalls.at(-1)).toEqual(['dispatch', 'demo-fha'])
+    expect(created).toHaveLength(0)
+    // No bd update of its own: quartermaster claims the bead.
+    expect(calls.some(c => c.args[0] === 'update')).toBe(false)
+  })
+  it('passes the agent picked, without its model, and only one quartermaster starts', async () => {
+    await D.readBoard()
+    await D.boardCommand('', 'web/demo-fha', 'delegate', 'codex/gpt-5')
+    expect(qmCalls.at(-1)).toEqual(['dispatch', 'demo-fha', '--agent', 'codex'])
+    await expect(D.boardCommand('', 'web/demo-fha', 'delegate', 'gemini')).rejects.toThrow('claude, codex or muse')
+  })
+  it('defaults to quartermaster’s worker_agent', async () => {
+    mkdirSync(path.join(home, '.config/quartermaster'), { recursive: true })
+    writeFileSync(path.join(home, '.config/quartermaster/config.toml'), 'repo = "~/x"\nworker_agent = "codex"\n')
+    await D.readBoard()
+    expect((await D.boardStartOptions('', 'web/demo-fha')).agent).toMatchObject({ kind: 'codex', place: 'quartermaster' })
+  })
+  it('says why quartermaster refused, and does not start the agent around it', async () => {
+    qm = args => (args[0] === 'version' ? { code: 0, stdout: 'quartermaster 0.6.0\n', stderr: '' } : { code: 1, stdout: '', stderr: 'Error: local: all 12 slots are busy' })
+    await D.readBoard()
+    await expect(D.boardCommand('', 'web/demo-fha', 'delegate')).rejects.toThrow(/^local: all 12 slots are busy$/)
+    expect(created).toHaveLength(0)
+  })
+  it('leaves a repo’s own database, and WHERDR_BEADS_START=wherdr, to wherdr’s Start', async () => {
+    await D.readBoard()
+    expect((await D.boardStartOptions('', 'demo-app/app-k2')).via).toBe('wherdr')
+    await D.boardCommand('', 'demo-app/app-k2', 'delegate')
+    expect(created).toHaveLength(1)
+    expect(qmCalls.filter(a => a[0] === 'dispatch')).toHaveLength(0)
+    B.resetBeadsCache()
+    process.env.WHERDR_BEADS_START = 'wherdr'
+    await D.readBoard()
+    expect((await D.boardStartOptions('', 'web/demo-fha')).via).toBe('wherdr')
+    await D.boardCommand('', 'web/demo-fha', 'delegate')
+    expect(created).toHaveLength(2)
+    expect(qmCalls.filter(a => a[0] === 'dispatch')).toHaveLength(0)
+  })
+  it('reads worker_agent only when it names an agent quartermaster starts', () => {
+    expect(B.parseWorkerAgentSetting('worker_agent = "muse"')).toBe('muse')
+    expect(B.parseWorkerAgentSetting('worker_agent = "gemini"')).toBe('')
+    expect(B.parseWorkerAgentSetting('coordinator_agent = "codex"')).toBe('')
   })
 })
 

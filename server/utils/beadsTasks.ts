@@ -219,7 +219,7 @@ export async function beadsSearchable(m: Machine): Promise<SearchableBoard> {
   return { machine: m.key, tasks: c.tasks.map(r => ({ row: strip(r), description: c.descriptions.get(r.id) || '' })) }
 }
 
-export function resetBeadsCache() { refsCache.clear(); lists.clear(); reading.clear(); queues.clear(); sources.clear(); links.clear(); linksRead = false }
+export function resetBeadsCache() { refsCache.clear(); lists.clear(); reading.clear(); queues.clear(); sources.clear(); links.clear(); linksRead = false; qmSeen.clear() }
 function forget(m: Machine) { lists.delete(m.key) }
 
 // ---------------------------------------------------------------- one bead
@@ -313,10 +313,16 @@ function refused(action: TaskCommand): HerdrError {
 }
 
 export async function beadStartOptions(m: Machine, id: unknown): Promise<StartOptions> {
-  await beadOf(m, id)
+  const { src } = await beadOf(m, id)
   const agents = await installedAgentKinds(m).catch(() => [] as string[])
+  if (src.hub && await hasQuartermaster(m)) {
+    const usable = agents.filter(k => QM_KINDS.includes(k))
+    const own = await qmWorkerAgent(m)
+    const kind = own || defaultAgent(usable)
+    return { agent: kind ? { value: kind, kind, place: 'quartermaster', from: 'quartermaster' } : null, agents: usable, slots: null, via: 'quartermaster' }
+  }
   const kind = defaultAgent(agents)
-  return { agent: kind ? { value: kind, kind, place: 'builtin', from: 'wherdr' } : null, agents, slots: null }
+  return { agent: kind ? { value: kind, kind, place: 'builtin', from: 'wherdr' } : null, agents, slots: null, via: 'wherdr' }
 }
 const defaultAgent = (agents: string[]) => (agents.includes('claude') ? 'claude' : agents[0] || '')
 
@@ -341,6 +347,7 @@ async function repoFolder(m: Machine, row: BeadRow, src: BeadsSource): Promise<s
 }
 
 async function startBead(m: Machine, row: BeadRow, src: BeadsSource, agent: unknown): Promise<{ ok: true, msg: string }> {
+  if (src.hub && await hasQuartermaster(m)) return dispatchBead(m, row, agent)
   const agents = await installedAgentKinds(m)
   const picked = typeof agent === 'string' && agent ? agent.split('/')[0]! : defaultAgent(agents)
   if (!picked || !agents.includes(picked)) throw new HerdrError('bad_agent', fmt('{agent} is not installed on {machine}', { agent: picked || '?', machine: m.label }))
@@ -357,6 +364,80 @@ async function startBead(m: Machine, row: BeadRow, src: BeadsSource, agent: unkn
   forget(m)
   log(`beads start ${row.bead} with ${picked}${m.local ? '' : ` on ${m.label}`}`)
   return { ok: true, msg: fmt('{agent} started on {id}', { agent: picked, id: row.bead }) }
+}
+
+// ---------------------------------------------------------------- quartermaster
+// A hub issue's Start is quartermaster's dispatch when the machine has
+// quartermaster (travisjeffery/herdr-quartermaster): it checks the bead's repo:
+// label against its repos, the host and its free worker slots, then claims the
+// bead, opens its worktree on `<prefix><id>-<slug>` and briefs an agent named
+// after it. Its refusal (no slot free, a repo it does not know…) is Start's
+// error: wherdr never starts the agent itself around it. A repo's own database,
+// a machine without quartermaster, or WHERDR_BEADS_START=wherdr: wherdr's Start.
+export type QuartermasterRunner = (m: Machine, args: string[], timeoutMs: number) => Promise<BeadsRunResult>
+const QM_KINDS = ['claude', 'codex', 'muse']
+const QM_PROBE_MS = 10_000
+const DISPATCH_TIMEOUT_MS = 180_000
+const QM_CONFIG = '.config/quartermaster/config.toml'
+
+// On an SSH machine: quartermaster's arguments, run from HOME with the beads env.
+export const REMOTE_QM_SCRIPT = USER_PATH_SH
+  + `f="$HOME/${BEADS_ENV_FILE}"; if [ -r "$f" ]; then set -a; . "$f"; set +a; fi; `
+  + 'cd "$HOME" || exit 1; NO_COLOR=1; export NO_COLOR; exec quartermaster "$@"'
+
+const runQm: QuartermasterRunner = async (m, args, timeoutMs) => {
+  if (m.exec) {
+    const r = await m.exec(REMOTE_QM_SCRIPT, args, { timeoutMs, maxBytes: OUTPUT_MAX })
+    return { code: r.code ?? 1, stdout: r.stdout.toString('utf8'), stderr: r.stderr.trim() }
+  }
+  const env: NodeJS.ProcessEnv = { ...HERDR_CHILD_ENV, PATH: userPath({ env: { PATH: HERDR_CHILD_ENV.PATH }, home: m.home }), NO_COLOR: '1', ...await localBeadsEnv(m.home) }
+  return new Promise(resolve => execFile('quartermaster', args, { cwd: m.home, env, timeout: timeoutMs, maxBuffer: OUTPUT_MAX }, (err, stdout, stderr) => resolve({
+    code: err ? (typeof err.code === 'number' ? err.code : 1) : 0,
+    stdout: String(stdout),
+    stderr: String(stderr || (err ? (err.killed ? `quartermaster did not answer within ${Math.round(timeoutMs / 1000)} s` : err.message) : '')).trim(),
+  })))
+}
+let qmRunner: QuartermasterRunner = runQm
+// Tests replace quartermaster with what it would answer.
+export function setQuartermasterRunner(r: QuartermasterRunner | null) { qmRunner = r || runQm }
+
+// WHERDR_BEADS_START: `auto` (quartermaster where it is installed) or `wherdr`.
+export const beadsStartSetting = (v = process.env.WHERDR_BEADS_START) => (v?.trim().toLowerCase() === 'wherdr' ? 'wherdr' : 'auto')
+
+// Whether the machine has quartermaster: `quartermaster version` answers. Asked
+// again after DISCOVER_MS, as databases are.
+const qmSeen = new Map<string, { at: number, ok: boolean }>()
+async function hasQuartermaster(m: Machine): Promise<boolean> {
+  if (beadsStartSetting() === 'wherdr') return false
+  const seen = qmSeen.get(m.key)
+  if (seen && Date.now() - seen.at < DISCOVER_MS) return seen.ok
+  const ok = await qmRunner(m, ['version'], QM_PROBE_MS).then(r => r.code === 0, () => false)
+  qmSeen.set(m.key, { at: Date.now(), ok })
+  return ok
+}
+
+// quartermaster's own default agent (`worker_agent` in its config), if it names one it starts.
+export function parseWorkerAgentSetting(toml: string): string {
+  const v = /^\s*worker_agent\s*=\s*["']([a-z]+)["']/m.exec(toml)?.[1] || ''
+  return QM_KINDS.includes(v) ? v : ''
+}
+async function qmWorkerAgent(m: Machine): Promise<string> {
+  try { return parseWorkerAgentSetting(await m.fs.readFile(path.posix.join(m.home, QM_CONFIG))) }
+  catch { return '' }
+}
+
+// `quartermaster dispatch <id> [--agent K]`: an agent picked for this start
+// only, else quartermaster's worker_agent. A model in the pick (`codex/gpt-5`)
+// is the program's own to choose there: quartermaster takes no model.
+async function dispatchBead(m: Machine, row: BeadRow, agent: unknown): Promise<{ ok: true, msg: string }> {
+  const kind = typeof agent === 'string' && agent ? agent.split('/')[0]! : ''
+  if (kind && !QM_KINDS.includes(kind)) throw new HerdrError('bad_agent', fmt('quartermaster starts claude, codex or muse, not {agent}', { agent: kind }))
+  if (kind && !(await installedAgentKinds(m)).includes(kind)) throw new HerdrError('bad_agent', fmt('{agent} is not installed on {machine}', { agent: kind, machine: m.label }))
+  const r = await qmRunner(m, ['dispatch', row.bead, ...(kind ? ['--agent', kind] : [])], DISPATCH_TIMEOUT_MS)
+  forget(m)
+  if (r.code !== 0) throw new HerdrError('dispatch_failed', firstLine(r.stderr).replace(/^Error:\s*/i, '') || firstLine(r.stdout) || `quartermaster dispatch: code ${r.code}`)
+  log(`quartermaster dispatch ${row.bead}${kind ? ` --agent ${kind}` : ''}${m.local ? '' : ` on ${m.label}`}`)
+  return { ok: true, msg: firstLine(r.stdout) || fmt('quartermaster dispatched {id}', { id: row.bead }) }
 }
 
 export async function addBead(m: Machine, b: { title?: unknown, description?: unknown, repo?: unknown, delegate?: unknown }): Promise<{ ok: true, msg: string }> {
