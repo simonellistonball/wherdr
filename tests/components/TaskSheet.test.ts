@@ -6,8 +6,8 @@ import TaskSheet from '~/components/TaskSheet.vue'
 import type { TaskHandover, TaskRow } from '#shared/projectsTasks'
 import { cachedAt, hiddenAgents } from '~/composables/useHerdr'
 
-const confirmation = vi.hoisted(() => ({ accepted: true }))
-mockNuxtImport('askConfirm', () => async () => confirmation.accepted)
+const confirmation = vi.hoisted(() => ({ accepted: true, asked: [] as { message: string, action: string }[] }))
+mockNuxtImport('askConfirm', () => async (message: string, action: string) => { confirmation.asked.push({ message, action }); return confirmation.accepted })
 
 // Each action's reply is held until the test lets it go.
 const held: Array<() => void> = []
@@ -1177,6 +1177,32 @@ describe('a beads issue', () => {
       expect(w.find('.task-bead-notes').exists()).toBe(false)
       w.unmount()
     })
+  })
+  it('dispatches through quartermaster, asked first: nothing is sent when declined', async () => {
+    const was = startReply
+    startReply = { agent: { value: 'claude', kind: 'claude', place: 'quartermaster', from: 'quartermaster' }, agents: ['claude', 'codex'], slots: null, via: 'quartermaster' }
+    Object.assign(shown, { stage: 'open', failure: '', failureStage: '' })
+    const sent: unknown[] = []
+    registerEndpoint('/api/tasks/action', { method: 'POST', handler: async (e) => { sent.push(await readBody(e)); return { ok: true, msg: 'started claude on demo-fha' } } })
+    confirmation.asked.length = 0
+    const w = await mountSuspended(TaskSheet, { props: { task: bead, machine: 'a', open: true } })
+    await flushPromises()
+    const start = document.querySelector<HTMLButtonElement>('.task-start')!
+    expect(start.textContent?.trim()).toBe('Dispatch')
+    expect(document.body.textContent).toContain('quartermaster’s worker agent')
+    confirmation.accepted = false
+    start.click(); await flushPromises()
+    expect(confirmation.asked.at(-1)).toMatchObject({ action: 'Dispatch' })
+    expect(confirmation.asked.at(-1)!.message).toContain('Dispatch demo-fha “Ship the release” to quartermaster?')
+    expect(sent).toEqual([])
+    confirmation.accepted = true
+    start.click(); await flushPromises()
+    await vi.waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent).toEqual([{ machine: 'a', id: 'web/demo-fha', action: 'delegate' }])
+    registerEndpoint('/api/tasks/action', { method: 'POST', handler: hold })
+    startReply = was
+    Object.assign(shown, { stage: 'approval' })
+    w.unmount()
   })
   it('offers Reopen once closed', async () => {
     Object.assign(shown, { stage: 'closed', failure: '', failureStage: '' })

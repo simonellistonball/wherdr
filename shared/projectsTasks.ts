@@ -721,7 +721,8 @@ export const runOver = (r: Pick<TaskRow, 'stage' | 'state' | 'archived'>) => !r.
 export interface TaskAgent { value: string, kind: string, place: string, from: string }
 // What Start offers: that default, and the agents installed on the task's machine.
 // `slots`: the board's slots as Start finds them (Queue when none is free).
-export interface StartOptions { agent: TaskAgent | null, agents: string[], slots?: TaskSlots | null }
+// `via` (beads only): who starts the agent, quartermaster's dispatch or wherdr itself.
+export interface StartOptions { agent: TaskAgent | null, agents: string[], slots?: TaskSlots | null, via?: 'quartermaster' | 'wherdr' }
 // `codex/gpt-5.5` → `codex`.
 export const agentKind = (v: string) => v.split('/')[0] || ''
 export function parseWorkerAgent(stdout: string): TaskAgent | null {

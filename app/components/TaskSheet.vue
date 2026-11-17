@@ -228,6 +228,7 @@ function agentSource(): string {
     case 'repo': return tl(`Default from your settings for ${repo}`, `Défaut de tes réglages pour ${repo}`)
     case 'you': return tl('Default from your settings', 'Défaut de tes réglages')
     case 'builtin': return beads.value ? tl('wherdr’s default') : tl('herdr-projects’ built-in default', 'Défaut intégré de herdr-projects')
+    case 'quartermaster': return tl('quartermaster’s worker agent')
     default: return tl(`Default: ${a.from}`, `Défaut : ${a.from}`)
   }
 }
@@ -250,8 +251,11 @@ async function loadStart() {
 
 // Queue: no slot free on the task's board, so Start puts it in the queue, at this place.
 const place = computed(() => startPlace(startOpts.value?.slots))
+// A hub bead on a machine with quartermaster: Start is its dispatch.
+const dispatching = computed(() => beads.value && startOpts.value?.via === 'quartermaster')
 function startLabel(): string {
   const a = startName.value
+  if (dispatching.value) return a ? tl(`Dispatch with ${a}`) : tl('Dispatch')
   if (place.value) return a ? tl(`Queue with ${a}`, `Mettre en file avec ${a}`) : tl('Queue', 'Mettre en file')
   return a ? tl(`Start with ${a}`, `Lancer avec ${a}`) : tl('Start', 'Lancer')
 }
@@ -459,6 +463,8 @@ async function act(action: TaskCommand, after?: string[]) {
     tl(`Stop the agent of “${t.title}”? Its turn ends now; the task stays, and Retry or Start picks it up again.`, `Arrêter l’agent de « ${t.title} » ? Son tour s’arrête maintenant ; la tâche reste, Réessayer ou Lancer la reprend.`),
     tl('Stop the agent', 'Arrêter l’agent'))) return
   if (action === 'finish' && !await askConfirm(finishQuestion(t.title, row.value?.chat), finishLabel(row.value?.chat), 'primary')) return
+  // A bead's Start claims it and opens a worktree and an agent: asked first.
+  if (action === 'delegate' && beads.value && !await askConfirm(beadStartQuestion(t.title), dispatching.value ? tl('Dispatch') : tl('Start'), 'primary')) return
   if (!still(was)) return
   const g = gen
   busy.value = true
@@ -482,6 +488,13 @@ async function act(action: TaskCommand, after?: string[]) {
     await settle(g)
   } catch (e) { failed(e, g) }
   finally { if (g === gen) { busy.value = false; running.value = null } }
+}
+
+function beadStartQuestion(title: string): string {
+  const id = props.task?.id.split('/')[1] || ''
+  const agent = startProgram.value || tl('its worker agent')
+  if (dispatching.value) return tl(`Dispatch ${id} “${title}” to quartermaster? It claims the bead, opens its worktree and starts ${agent} there, on one of the host’s worker slots.`)
+  return tl(`Start ${agent} on ${id} “${title}”? It opens a worktree for the bead and marks it in progress.`)
 }
 
 // Start after the tasks picked: the board checks them, and says why it refuses.
