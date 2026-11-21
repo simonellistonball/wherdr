@@ -97,6 +97,24 @@ Issues in a repo's own database, machines without quartermaster, and every machi
 `WHERDR_BEADS_START=wherdr` is in the service's environment use wherdr's own Start
 (above). `GET /api/tasks/start` says which in `via` (`quartermaster` or `wherdr`).
 
+## Resume and Resolve (quartermaster)
+
+On the same machines (a hub issue, `quartermaster version` answers, `WHERDR_BEADS_START`
+not `wherdr`), the sheet offers two more of quartermaster's commands, each asked first:
+
+- **Resume**, on an open issue whose worktree is there but has no agent left (it exited,
+  or its workspace was closed): `quartermaster resume <id>` restarts its agent in that
+  worktree, continuing its last conversation.
+- **Resolve**, on a closed issue whose worktree is still there: `quartermaster resolve <id>`
+  removes the worktree and its merged branch. quartermaster refuses while an agent is
+  open there or the worktree has changes; the sheet then shows why and offers **Force
+  resolve**, asked again with the worktree named, which runs `quartermaster resolve <id>
+  --force` and loses whatever was not committed and merged.
+
+The issue's details say which applies (`bead.resume`, `bead.resolve`), and
+`POST /api/tasks/quartermaster` (`{ machine, id, action: 'resume' | 'resolve', force? }`)
+runs it. A refusal is shown as is; wherdr does nothing around it.
+
 ## Agents started elsewhere (quartermaster)
 
 An issue's agent is found by its worktree, so agents that other tools start on

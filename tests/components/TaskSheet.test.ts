@@ -1214,4 +1214,60 @@ describe('a beads issue', () => {
     Object.assign(shown, { stage: 'approval' })
     w.unmount()
   })
+  describe('quartermaster Resume and Resolve', () => {
+    const base = { id: 'demo-fha', status: 'open', priority: 2, type: 'task', assignee: '', labels: ['repo:web'], comments: 0, notes: '', hub: true }
+    let sent: Record<string, unknown>[] = []
+    let refuse = ''
+    registerEndpoint('/api/tasks/quartermaster', { method: 'POST', handler: async (e) => {
+      const body = await readBody(e)
+      sent.push(body)
+      if (refuse && !body.force) { setResponseStatus(e, 502); return { error: refuse } }
+      return { ok: true, msg: `${body.action}d demo-fha` }
+    } })
+    async function mountWith(info: Record<string, unknown>, row: Partial<TaskRow> = {}) {
+      sent = []; refuse = ''; confirmation.asked.length = 0; confirmation.accepted = true
+      registerEndpoint('/api/tasks/details', () => ({ id: 'web/demo-fha', title: 'Ship the release', msg: '', description: '', agent: '', pr: '', branch: 'tj/demo-fha-ship-the-release', worktree: '/w/demo-fha', failure: '', failureStage: '', failureAuth: false, summary: '', pane: null, stage: info.status, bead: { ...base, ...info } }))
+      const w = await mountSuspended(TaskSheet, { props: { task: { ...bead, ...row }, machine: 'a', open: true } })
+      await flushPromises()
+      return w
+    }
+    const button = (cls: string) => document.querySelector<HTMLButtonElement>(cls)
+    it('offers neither without quartermaster’s say', async () => {
+      const w = await mountWith({})
+      expect(button('.task-resume')).toBeNull()
+      expect(button('.task-resolve')).toBeNull()
+      w.unmount()
+    })
+    it('resumes, asked first: nothing is sent when declined', async () => {
+      const w = await mountWith({ status: 'in_progress', resume: true }, { state: 'running', stage: 'in_progress', group: 'working' })
+      confirmation.accepted = false
+      button('.task-resume')!.click(); await flushPromises()
+      expect(confirmation.asked.at(-1)).toMatchObject({ action: 'Resume' })
+      expect(confirmation.asked.at(-1)!.message).toContain('Resume demo-fha “Ship the release”?')
+      expect(sent).toEqual([])
+      confirmation.accepted = true
+      button('.task-resume')!.click(); await flushPromises()
+      await vi.waitFor(() => expect(sent).toEqual([{ machine: 'a', id: 'web/demo-fha', action: 'resume' }]))
+      w.unmount()
+    })
+    it('resolves a closed bead, and offers Force, asked harder, once quartermaster refuses', async () => {
+      const w = await mountWith({ status: 'closed', resolve: true }, { state: 'done', stage: 'closed', group: 'done' })
+      expect(button('.task-resolve-force')).toBeNull()
+      refuse = 'demo-fha: worktree has uncommitted changes'
+      button('.task-resolve')!.click(); await flushPromises()
+      expect(confirmation.asked.at(-1)).toMatchObject({ action: 'Resolve' })
+      await vi.waitFor(() => expect([...document.querySelectorAll('[role=alert]')].map(e => e.textContent).join('\n')).toContain('uncommitted changes'))
+      expect(sent).toEqual([{ machine: 'a', id: 'web/demo-fha', action: 'resolve' }])
+      await vi.waitFor(() => expect(button('.task-resolve-force')).not.toBeNull())
+      confirmation.accepted = false
+      button('.task-resolve-force')!.click(); await flushPromises()
+      expect(confirmation.asked.at(-1)).toMatchObject({ action: 'Remove it anyway' })
+      expect(confirmation.asked.at(-1)!.message).toContain('lost for good')
+      expect(sent).toHaveLength(1)
+      confirmation.accepted = true
+      button('.task-resolve-force')!.click(); await flushPromises()
+      await vi.waitFor(() => expect(sent.at(-1)).toEqual({ machine: 'a', id: 'web/demo-fha', action: 'resolve', force: true }))
+      w.unmount()
+    })
+  })
 })

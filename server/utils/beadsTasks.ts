@@ -22,7 +22,7 @@ import {
 import { joinId } from '../../shared/ids'
 import {
   type MachineTasks, type StartOptions, type TaskCommand, type TaskDetails, type TaskPanes, type TaskRow,
-  cleanRepo, cleanTell, cleanTitle, isTaskCommand, isTaskId,
+  cleanRepo, cleanTell, cleanTitle, isQmAction, isTaskCommand, isTaskId,
 } from '../../shared/projectsTasks'
 import type { SearchableBoard } from '../../shared/taskSearch'
 import { fmt } from '../../shared/message'
@@ -240,7 +240,8 @@ export async function beadDetails(m: Machine, id: unknown): Promise<TaskDetails 
   const [show, comments] = [await bd(m, src, showArgs(row.bead), LIST_TIMEOUT_MS), await bd(m, src, commentsArgs(row.bead), LIST_TIMEOUT_MS).catch(() => '')]
   const agent = await agentOf(m, row, src)
   const d = parseBeadDetails(show, row.id, comments)
-  return { ...d, ...(d.bead ? { bead: { ...d.bead, hub: src.hub } } : {}), branch: agent.branch, worktree: agent.worktree, pane: agent.pane }
+  const qm = await qmOffers(m, row, src, agent)
+  return { ...d, ...(d.bead ? { bead: { ...d.bead, hub: src.hub, ...qm } } : {}), branch: agent.branch, worktree: agent.worktree, pane: agent.pane }
 }
 
 export async function describeBead(m: Machine, id: unknown, text: unknown): Promise<{ ok: true, msg: string }> {
@@ -438,6 +439,35 @@ async function dispatchBead(m: Machine, row: BeadRow, agent: unknown): Promise<{
   if (r.code !== 0) throw new HerdrError('dispatch_failed', firstLine(r.stderr).replace(/^Error:\s*/i, '') || firstLine(r.stdout) || `quartermaster dispatch: code ${r.code}`)
   log(`quartermaster dispatch ${row.bead}${kind ? ` --agent ${kind}` : ''}${m.local ? '' : ` on ${m.label}`}`)
   return { ok: true, msg: firstLine(r.stdout) || fmt('quartermaster dispatched {id}', { id: row.bead }) }
+}
+
+// Resume and Resolve, quartermaster's, on a hub issue where it is installed:
+// Resume (`quartermaster resume <id>`) when the issue is open and its worktree
+// has no agent left, continuing that agent's last conversation; Resolve
+// (`quartermaster resolve <id>`) once it is closed and its worktree is still
+// there, removing it and its merged branch. quartermaster refuses Resolve on an
+// open issue, a working agent or a dirty worktree: `force` (asked hard in the
+// sheet) passes --force, which removes it all the same.
+async function qmOffers(m: Machine, row: BeadRow, src: BeadsSource, agent: BeadAgent): Promise<{ resume?: boolean, resolve?: boolean }> {
+  if (!src.hub || !agent.worktree || !await hasQuartermaster(m)) return {}
+  return row.group === 'done' ? { resolve: true } : agent.pane ? {} : { resume: true }
+}
+const RESUME_TIMEOUT_MS = 180_000
+const RESOLVE_TIMEOUT_MS = 60_000
+export async function beadQuartermaster(m: Machine, id: unknown, action: unknown, force?: unknown): Promise<{ ok: true, msg: string }> {
+  if (!isQmAction(action)) throw new HerdrError('bad_action', 'Unknown action')
+  const { row, src } = await beadOf(m, id)
+  if (!src.hub) throw new HerdrError('bad_action', 'quartermaster works on hub issues only')
+  if (!await hasQuartermaster(m)) throw new HerdrError('bad_action', fmt('quartermaster is not installed on {machine}', { machine: m.label }))
+  const forced = action === 'resolve' && force === true
+  if (action === 'resume' && row.group === 'done') throw new HerdrError('bad_action', 'This task is closed: Reopen it first')
+  if (action === 'resolve' && row.group !== 'done' && !forced) throw new HerdrError('bad_action', 'This task is not closed')
+  const args = [action, row.bead, ...(forced ? ['--force'] : [])]
+  const r = await qmRunner(m, args, action === 'resume' ? RESUME_TIMEOUT_MS : RESOLVE_TIMEOUT_MS)
+  forget(m)
+  if (r.code !== 0) throw new HerdrError(`${action}_failed`, firstLine(r.stderr).replace(/^Error:\s*/i, '') || firstLine(r.stdout) || `quartermaster ${action}: code ${r.code}`)
+  log(`quartermaster ${args.join(' ')}${m.local ? '' : ` on ${m.label}`}`)
+  return { ok: true, msg: firstLine(r.stdout) || fmt(action === 'resume' ? 'quartermaster resumed {id}' : 'quartermaster resolved {id}', { id: row.bead }) }
 }
 
 export async function addBead(m: Machine, b: { title?: unknown, description?: unknown, repo?: unknown, delegate?: unknown }): Promise<{ ok: true, msg: string }> {

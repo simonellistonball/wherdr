@@ -121,7 +121,13 @@ export interface TaskDetails {
 }
 // `notes`: its notes field (`bd note` appends to it). `hub`: in the shared hub,
 // where its `repo:` label places it on the Board (the sheet does not change it).
-export interface BeadInfo { id: string, status: string, priority: number, type: string, assignee: string, labels: string[], comments: number, notes: string, hub?: boolean }
+// `resume` / `resolve`: quartermaster's, offered on a hub issue where it is installed
+// (as Start's `via`): Resume when its worktree has no agent left, Resolve once it is closed.
+export interface BeadInfo { id: string, status: string, priority: number, type: string, assignee: string, labels: string[], comments: number, notes: string, hub?: boolean, resume?: boolean, resolve?: boolean }
+// What quartermaster does to a bead from the sheet (`POST /api/tasks/quartermaster`).
+export const QM_ACTIONS = ['resume', 'resolve'] as const
+export type QmAction = typeof QM_ACTIONS[number]
+export const isQmAction = (v: unknown): v is QmAction => QM_ACTIONS.includes(v as QmAction)
 
 // The panes wherdr adds to `details`: its agent's, and its reviewer's while a
 // review runs (1.x `reviewing`, or `reviewneeds` when the reviewer shows a
