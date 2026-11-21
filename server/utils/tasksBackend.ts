@@ -95,6 +95,12 @@ export async function boardEditBead(machine: unknown, id: unknown, body: { add?:
   if (!b) throw new HerdrError('bad_action', 'Labels and notes are for beads tasks only')
   return beads.editBead(m, id, body)
 }
+// quartermaster's Resume and Resolve (beads only).
+export async function boardQuartermaster(machine: unknown, id: unknown, action: unknown, force?: unknown) {
+  const { m, beads: b } = await isBeads(machine)
+  if (!b) throw new HerdrError('bad_action', 'Resume and Resolve are for beads tasks only')
+  return beads.beadQuartermaster(m, id, action, force)
+}
 export async function boardCommand(machine: unknown, id: unknown, action: unknown, agent?: unknown, after?: unknown, effort?: unknown) {
   const { m, beads: b } = await isBeads(machine)
   return b ? beads.beadCommand(m, id, action, agent) : projects.taskCommand(machine, id, action, agent, after, effort)

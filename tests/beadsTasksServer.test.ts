@@ -51,7 +51,17 @@ let hubFound: boolean
 // quartermaster: missing unless a test installs it; what it was asked.
 let qm: ((args: string[]) => { code: number, stdout: string, stderr: string }) | null
 let qmCalls: string[][]
+// demo-fha closed: the hub lists it with the closed issues.
+let fhaClosed: boolean
+function hubList(closed: boolean): string {
+  const open = JSON.parse(rec('list.json')) as Record<string, unknown>[]
+  const done = JSON.parse(rec('list-closed.json')) as Record<string, unknown>[]
+  if (!fhaClosed) return JSON.stringify(closed ? done : open)
+  const fha = { ...open.find(r => r.id === 'demo-fha')!, status: 'closed', closed_at: '2026-11-18T10:00:00Z', close_reason: 'merged' }
+  return JSON.stringify(closed ? [fha, ...done] : open.filter(r => r.id !== 'demo-fha'))
+}
 beforeEach(() => {
+  fhaClosed = false
   rmSync(home, { recursive: true, force: true })
   mkdirSync(path.join(repo, '.beads'), { recursive: true })
   mkdirSync(path.join(repo, '.git'), { recursive: true })
@@ -83,7 +93,7 @@ beforeEach(() => {
     }
     // The repo's own database: one issue of its own.
     if (args[0] === 'list' && !hub) return ok(args.includes('--status=closed') ? '[]' : '[{"id":"app-k2","title":"Local bug","status":"open","priority":1,"issue_type":"bug","created_at":"2026-11-13T20:30:40Z","labels":["repo:elsewhere"]}]')
-    if (args[0] === 'list') return ok(args.includes('--status=closed') ? rec('list-closed.json') : rec('list.json'))
+    if (args[0] === 'list') return ok(hubList(args.includes('--status=closed')))
     if (args[0] === 'show') return ok(rec('show.json'))
     if (args[0] === 'comments') return ok(rec('comments.json'))
     if (args[0] === 'create') return ok('{"id":"hub-new1","title":"x","status":"open"}')
@@ -285,6 +295,69 @@ describe('Start through quartermaster', () => {
     expect(B.parseWorkerAgentSetting('worker_agent = "muse"')).toBe('muse')
     expect(B.parseWorkerAgentSetting('worker_agent = "gemini"')).toBe('')
     expect(B.parseWorkerAgentSetting('coordinator_agent = "codex"')).toBe('')
+  })
+})
+
+describe('Resume and Resolve through quartermaster', () => {
+  const tree = path.join(home, '.herdr/worktrees/web/tj-demo-fha-ship-the-release')
+  let answer: { code: number, stdout: string, stderr: string }
+  beforeEach(() => {
+    mkdirSync(tree, { recursive: true })
+    answer = { code: 0, stdout: 'resumed demo-fha (w5:p1)\n', stderr: '' }
+    qm = args => (args[0] === 'version' ? { code: 0, stdout: 'quartermaster 0.6.0\n', stderr: '' } : answer)
+    worktrees = [
+      { branch: 'main', path: web, is_linked_worktree: false },
+      { branch: 'tj/demo-fha-ship-the-release', path: tree, is_linked_worktree: true, open_workspace_id: null },
+    ]
+  })
+  it('offers Resume on an open bead whose worktree has no agent left, and runs quartermaster resume', async () => {
+    await D.readBoard()
+    const d = await D.boardTaskDetails('', 'web/demo-fha')
+    expect(d.bead).toMatchObject({ resume: true })
+    expect(d.bead?.resolve).toBeUndefined()
+    const r = await D.boardQuartermaster('', 'web/demo-fha', 'resume')
+    expect(r.msg).toBe('resumed demo-fha (w5:p1)')
+    expect(qmCalls.at(-1)).toEqual(['resume', 'demo-fha'])
+  })
+  it('offers nothing while its agent is open, or where quartermaster is missing', async () => {
+    worktrees[1] = { ...worktrees[1], open_workspace_id: 'w5' }
+    panes.push({ id: 'w5:p2', cwd: tree, workspace: 'w5', agent: 'claude', name: 'demo-fha' })
+    await D.readBoard()
+    const d = await D.boardTaskDetails('', 'web/demo-fha')
+    expect(d.bead?.resume).toBeUndefined()
+    expect(d.bead?.resolve).toBeUndefined()
+    qm = null
+    B.resetBeadsCache()
+    panes = panes.filter(p => p.workspace !== 'w5')
+    await D.readBoard()
+    expect((await D.boardTaskDetails('', 'web/demo-fha')).bead?.resume).toBeUndefined()
+    await expect(D.boardQuartermaster('', 'web/demo-fha', 'resume')).rejects.toThrow('not installed')
+  })
+  it('offers Resolve on a closed bead with its worktree, and --force only when asked', async () => {
+    fhaClosed = true
+    answer = { code: 0, stdout: 'resolved demo-fha: removed worktree and branch tj/demo-fha-ship-the-release\n', stderr: '' }
+    await D.readBoard()
+    const d = await D.boardTaskDetails('', 'web/demo-fha')
+    expect(d.bead).toMatchObject({ resolve: true })
+    expect(d.bead?.resume).toBeUndefined()
+    await D.boardQuartermaster('', 'web/demo-fha', 'resolve')
+    expect(qmCalls.at(-1)).toEqual(['resolve', 'demo-fha'])
+    await D.boardQuartermaster('', 'web/demo-fha', 'resolve', true)
+    expect(qmCalls.at(-1)).toEqual(['resolve', 'demo-fha', '--force'])
+    await expect(D.boardQuartermaster('', 'web/demo-fha', 'resume')).rejects.toThrow('closed')
+  })
+  it('says why quartermaster refused Resolve', async () => {
+    fhaClosed = true
+    answer = { code: 1, stdout: '', stderr: 'Error: demo-fha: worktree has uncommitted changes (use --force)' }
+    await D.readBoard()
+    await expect(D.boardQuartermaster('', 'web/demo-fha', 'resolve')).rejects.toThrow(/^demo-fha: worktree has uncommitted changes \(use --force\)$/)
+  })
+  it('refuses Resolve on an open bead unless forced, other actions, and a repo’s own database', async () => {
+    await D.readBoard()
+    await expect(D.boardQuartermaster('', 'web/demo-fha', 'resolve')).rejects.toThrow('not closed')
+    await expect(D.boardQuartermaster('', 'web/demo-fha', 'dispatch')).rejects.toThrow('Unknown action')
+    await expect(D.boardQuartermaster('', 'demo-app/app-k2', 'resume')).rejects.toThrow('hub issues only')
+    expect(qmCalls.filter(a => a[0] !== 'version')).toEqual([])
   })
 })
 

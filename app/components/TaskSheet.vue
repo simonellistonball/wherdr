@@ -24,7 +24,11 @@
 // "Start after…" picks tasks to wait for, on any machine the Board reads
 // (`delegate --after`); a task that waits says for what, with "Stop waiting"
 // (`after --clear`), and one in the queue says its place.
-import { canPickAttempt, AFTER_MAX, TASK_QUESTION_MAX, NO_ACTIONS, type StartOptions, type TaskCommand, type TaskDetails, type TaskRow, type TasksReply, finishCase, prNumber, startPlace, taskActions, taskKey } from '#shared/projectsTasks'
+// A hub bead where quartermaster is installed: Resume (its worktree has no
+// agent left) and Resolve (closed: its worktree and merged branch go), both
+// asked first; a Resolve quartermaster refuses (open or dirty) offers Force,
+// asked harder.
+import { canPickAttempt, AFTER_MAX, TASK_QUESTION_MAX, NO_ACTIONS, type QmAction, type StartOptions, type TaskCommand, type TaskDetails, type TaskRow, type TasksReply, finishCase, prNumber, startPlace, taskActions, taskKey } from '#shared/projectsTasks'
 import { taskActivity } from '#shared/taskActivity'
 import AppSheet from './AppSheet.vue'
 import ModelPicker from './ModelPicker.vue'
@@ -115,6 +119,10 @@ const busy = ref(false)
 const running = ref<TaskCommand | null>(null)
 // Why the last action failed, kept in the sheet (a toast goes away).
 const actionError = ref('')
+// quartermaster's Resume and Resolve (`/api/tasks/quartermaster`), as the bead's details offer them.
+const qmRunning = ref<QmAction | null>(null)
+// quartermaster refused Resolve (an open agent, a dirty worktree): Force is offered.
+const resolveRefused = ref(false)
 // A failed task's Retry or Start waits for its details (what failed).
 const failure = computed(() => (details.value && details.value.id === props.task?.id ? details.value : null))
 // Archived: as its details (its file) or its row say, until Restore from here.
@@ -350,6 +358,8 @@ watch([open, target], ([o]) => {
   running.value = null
   actionError.value = ''
   restored.value = false
+  qmRunning.value = null
+  resolveRefused.value = false
   pick.value = null
   startModel.value = null
   startEffort.value = null
@@ -488,6 +498,39 @@ async function act(action: TaskCommand, after?: string[]) {
     await settle(g)
   } catch (e) { failed(e, g) }
   finally { if (g === gen) { busy.value = false; running.value = null } }
+}
+
+const qmShown = computed(() => !offlineView.value && Boolean(bead.value?.resume || bead.value?.resolve))
+function qmQuestion(action: QmAction, force: boolean, title: string): string {
+  const id = bead.value?.id || ''
+  if (action === 'resume') return tl(`Resume ${id} “${title}”? quartermaster restarts its agent in its worktree, continuing its last conversation, on one of the host’s worker slots.`)
+  if (!force) return tl(`Resolve ${id} “${title}”? quartermaster removes its worktree and its merged branch. It refuses while an agent is open there or the worktree has changes.`)
+  return tl(`Force-resolve ${id} “${title}”? quartermaster removes its worktree even though an agent is open there or it has uncommitted or unmerged changes. That work is lost for good: nothing is committed or pushed first.`)
+}
+async function qmAct(action: QmAction, force = false) {
+  const t = props.task
+  if (!t || busy.value || !bead.value) return
+  const was = target()
+  const machine = props.machine
+  const id = bead.value.id
+  const code = force ? [`quartermaster resolve ${id} --force`, details.value?.worktree ? tl(`removes ${details.value.worktree}`) : ''].filter(Boolean).join('\n') : ''
+  const label = action === 'resume' ? tl('Resume') : force ? tl('Remove it anyway') : tl('Resolve')
+  if (!await askConfirm(qmQuestion(action, force, t.title), label, action === 'resume' ? 'primary' : 'error', code)) return
+  if (!still(was)) return
+  const g = gen
+  busy.value = true
+  qmRunning.value = action
+  actionError.value = ''
+  try {
+    const r = await api<{ msg: string }>('/api/tasks/quartermaster', { machine, id: t.id, action, ...(force ? { force: true } : {}) })
+    haptic()
+    if (g === gen) resolveRefused.value = false
+    toast(r.msg || (action === 'resume' ? tl('Resumed') : tl('Resolved')))
+    await settle(g)
+  } catch (e) {
+    failed(e, g)
+    if (action === 'resolve' && !force && g === gen) resolveRefused.value = true
+  } finally { if (g === gen) { busy.value = false; qmRunning.value = null } }
 }
 
 function beadStartQuestion(title: string): string {
@@ -751,7 +794,7 @@ function chat() {
         <span v-if="needsPick" class="task-start-from task-start-missing" role="status">{{ tl(`${defaultKind} is not installed on this machine: pick another agent to start it.`, `${defaultKind} n’est pas installé sur cette machine : choisis un autre agent pour la lancer.`) }}</span>
         <span v-if="startName" class="task-start-from">{{ tl('For this start only: the default stays.', 'Pour ce lancement seulement : le défaut ne change pas.') }}</span>
       </div>
-      <div v-if="chatShown || actions.approve || actions.delegate || actions.retry || actions.finish || actions.stop || actions.archive || actions.restore" class="task-sheet-actions">
+      <div v-if="qmShown || chatShown || actions.approve || actions.delegate || actions.retry || actions.finish || actions.stop || actions.archive || actions.restore" class="task-sheet-actions">
         <UButton v-if="actions.restore" color="primary" icon="i-lucide-archive-restore" :loading="running === 'restore'" :disabled="busy || offlineView" @click="act('restore')">{{ beads ? tl('Reopen') : tl('Restore', 'Restaurer') }}</UButton>
         <UButton v-if="actions.delegate" color="primary" :icon="place ? 'i-lucide-list-ordered' : 'i-lucide-play'" class="task-start" :loading="running === 'delegate' && !picking" :disabled="busy || offlineView || needsPick" @click="act('delegate')">{{ startLabel() }}</UButton>
         <UButton v-if="actions.delegate && !beads" color="primary" variant="outline" icon="i-lucide-hourglass" class="task-start-after" :aria-expanded="picking" :disabled="busy || offlineView || needsPick" @click="picking ? closePicker() : openPicker()">{{ tl('Start after…', 'Démarrer après…') }}</UButton>
@@ -768,6 +811,9 @@ function chat() {
           {{ tl('Open the chat', 'Ouvrir la discussion') }}
         </UButton>
         <UButton v-if="actions.stop" color="error" variant="outline" icon="i-lucide-square" :loading="running === 'stop'" :disabled="busy || offlineView" @click="act('stop')">{{ tl('Stop', 'Arrêter') }}</UButton>
+        <UButton v-if="qmShown && bead?.resume" color="primary" variant="outline" icon="i-lucide-play" class="task-resume" :loading="qmRunning === 'resume'" :disabled="busy" @click="qmAct('resume')">{{ tl('Resume') }}</UButton>
+        <UButton v-if="qmShown && bead?.resolve" color="neutral" variant="outline" icon="i-lucide-trash-2" class="task-resolve" :loading="qmRunning === 'resolve' && !resolveRefused" :disabled="busy" @click="qmAct('resolve')">{{ tl('Resolve') }}</UButton>
+        <UButton v-if="qmShown && bead?.resolve && resolveRefused" color="error" variant="outline" icon="i-lucide-triangle-alert" class="task-resolve-force" :loading="qmRunning === 'resolve' && resolveRefused" :disabled="busy" @click="qmAct('resolve', true)">{{ tl('Force resolve') }}</UButton>
         <UButton v-if="actions.archive" color="neutral" variant="ghost" :icon="beads ? 'i-lucide-circle-check' : 'i-lucide-archive'" class="task-archive" :loading="running === 'archive'" :disabled="busy || offlineView" @click="act('archive')">{{ beads ? tl('Close') : tl('Archive', 'Archiver') }}</UButton>
       </div>
       <p v-if="resuming" role="status">{{ tl('Resuming…', 'Reprise…') }}</p>
